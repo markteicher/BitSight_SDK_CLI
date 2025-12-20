@@ -26,19 +26,15 @@ def fetch_company_relationships(
     Endpoint:
         GET /ratings/v1/companies/{company_guid}/relationships
 
-    Deterministic pagination using links.next.
-
-    Auth:
-        HTTP Basic Auth using api_key as username and blank password.
+    Full 1:1 physical mapping of results[] fields:
+        guid, company_guid, company_name, relationship_type,
+        creator, last_editor, created_time, last_edited_time
     """
 
     if base_url.endswith("/"):
         base_url = base_url[:-1]
 
-    endpoint = BITSIGHT_COMPANY_RELATIONSHIPS_ENDPOINT.format(
-        company_guid=company_guid
-    )
-    url = f"{base_url}{endpoint}"
+    url = f"{base_url}{BITSIGHT_COMPANY_RELATIONSHIPS_ENDPOINT.format(company_guid=company_guid)}"
     headers = {"Accept": "application/json"}
 
     records: List[Dict[str, Any]] = []
@@ -49,8 +45,9 @@ def fetch_company_relationships(
 
     while True:
         params = {"limit": limit, "offset": offset}
+
         logging.info(
-            f"Fetching relationships for company {company_guid}: {url} "
+            f"Fetching company relationship details for {company_guid}: {url} "
             f"(limit={limit}, offset={offset})"
         )
 
@@ -70,8 +67,14 @@ def fetch_company_relationships(
         for obj in results:
             records.append(
                 {
-                    "company_guid": company_guid,
-                    "related_company_guid": (obj.get("company") or {}).get("guid"),
+                    "relationship_guid": obj.get("guid"),
+                    "company_guid": obj.get("company_guid"),
+                    "company_name": obj.get("company_name"),
+                    "relationship_type": obj.get("relationship_type"),
+                    "creator": obj.get("creator"),
+                    "last_editor": obj.get("last_editor"),
+                    "created_time": obj.get("created_time"),
+                    "last_edited_time": obj.get("last_edited_time"),
                     "ingested_at": ingested_at,
                     "raw_payload": obj,
                 }
@@ -90,9 +93,7 @@ def fetch_company_relationships(
 
         offset += limit
 
-    logging.info(
-        f"Total relationships fetched for company {company_guid}: {len(records)}"
-    )
+    logging.info(f"Total company relationship records fetched: {len(records)}")
     return records
 
 
