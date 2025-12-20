@@ -4,7 +4,7 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 
 # BitSight Observations endpoint (per company)
 BITSIGHT_COMPANY_OBSERVATIONS_ENDPOINT = "/ratings/v1/companies/{company_guid}/observations"
@@ -58,14 +58,25 @@ def fetch_observations(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append(_normalize_observation(obj, company_guid, ingested_at))
+            records.append(
+                {
+                    "observation_guid": obj.get("guid"),
+                    "company_guid": company_guid,
+                    "ingested_at": ingested_at,
+                    "raw_payload": obj,
+                }
+            )
 
         links = payload.get("links") or {}
         next_link = links.get("next")
 
         if next_link:
             url = _absolutize_next(url, next_link)
-            offset += limit
+            next_offset = _extract_offset(url)
+            if next_offset is not None:
+                offset = next_offset
+            else:
+                offset += limit
             continue
 
         if len(results) < limit:
@@ -79,27 +90,17 @@ def fetch_observations(
     return records
 
 
-def _normalize_observation(
-    obj: Dict[str, Any],
-    company_guid: str,
-    ingested_at: datetime,
-) -> Dict[str, Any]:
-    """
-    Map an observation object into dbo.bitsight_observations schema.
-    """
-
-    return {
-        "observation_guid": obj.get("guid"),
-        "finding_guid": obj.get("finding_guid"),
-        "company_guid": company_guid,
-        "observed_date": obj.get("observed_date"),
-        "observation_type": obj.get("type"),
-        "ingested_at": ingested_at,
-        "raw_payload": obj,
-    }
-
-
 def _absolutize_next(current_url: str, next_link: str) -> str:
     if next_link.startswith("http://") or next_link.startswith("https://"):
         return next_link
     return urljoin(current_url, next_link)
+
+
+def _extract_offset(url: str) -> Optional[int]:
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if "offset" in qs and qs["offset"]:
+            return int(qs["offset"][0])
+    except Exception:
+        return None
+    return None
