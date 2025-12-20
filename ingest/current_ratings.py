@@ -1,129 +1,101 @@
 #!/usr/bin/env python3
 
-import json
 import logging
-import os
+import requests
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
+from urllib.parse import urljoin
 
-from ingest.base import BitSightIngestBase
-from db.mssql import MSSQLDatabase
+# BitSight Current Ratings endpoint
+BITSIGHT_CURRENT_RATINGS_ENDPOINT = "/ratings/v1/current-ratings"
 
 
-class CurrentRatingsIngest(BitSightIngestBase):
-    ENDPOINT_PATH = "/ratings/v1/current-ratings"
+def fetch_current_ratings(
+    session: requests.Session,
+    base_url: str,
+    api_key: str,
+    timeout: int = 60,
+    proxies: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch current security ratings for all companies.
+    Deterministic pagination using links.next.
+    Auth: HTTP Basic Auth using api_key as username and blank password.
+    """
 
-    def __init__(self):
-        super().__init__(
-            api_key=os.environ["BITSIGHT_API_KEY"],
-            base_url=os.environ.get("BITSIGHT_BASE_URL", "https://api.bitsighttech.com"),
+    if base_url.endswith("/"):
+        base_url = base_url[:-1]
+
+    url = f"{base_url}{BITSIGHT_CURRENT_RATINGS_ENDPOINT}"
+    headers = {"Accept": "application/json"}
+
+    records: List[Dict[str, Any]] = []
+    ingested_at = datetime.utcnow()
+
+    limit = 100
+    offset = 0
+
+    while True:
+        params = {"limit": limit, "offset": offset}
+        logging.info(f"Fetching current ratings: {url} (limit={limit}, offset={offset})")
+
+        resp = session.get(
+            url,
+            headers=headers,
+            auth=(api_key, ""),
+            params=params,
+            timeout=timeout,
+            proxies=proxies,
         )
+        resp.raise_for_status()
 
-        self.db = MSSQLDatabase(
-            server=os.environ["MSSQL_SERVER"],
-            database=os.environ["MSSQL_DATABASE"],
-            username=os.environ["MSSQL_USERNAME"],
-            password=os.environ["MSSQL_PASSWORD"],
-        )
+        payload = resp.json()
+        results = payload.get("results", [])
 
-    def run(self) -> None:
-        logging.info("Ingesting BitSight current ratings")
+        for obj in results:
+            records.append(_normalize_current_rating(obj, ingested_at))
 
-        merge_sql = """
-        MERGE dbo.bitsight_current_ratings AS target
-        USING (SELECT ? AS company_guid) AS source
-        ON target.company_guid = source.company_guid
-        WHEN MATCHED THEN
-            UPDATE SET
-                company_name = ?,
-                rating = ?,
-                rating_date = ?,
-                rating_level = ?,
-                industry_name = ?,
-                industry_slug = ?,
-                sub_industry_name = ?,
-                sub_industry_slug = ?,
-                network_size_v4 = ?,
-                ingested_at = ?,
-                raw_payload = ?
-        WHEN NOT MATCHED THEN
-            INSERT (
-                company_guid,
-                company_name,
-                rating,
-                rating_date,
-                rating_level,
-                industry_name,
-                industry_slug,
-                sub_industry_name,
-                sub_industry_slug,
-                network_size_v4,
-                ingested_at,
-                raw_payload
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """
+        links = payload.get("links") or {}
+        next_link = links.get("next")
 
-        now = datetime.utcnow()
+        if next_link:
+            url = _absolutize_next(url, next_link)
+            offset += limit
+            continue
 
-        try:
-            count = 0
-            for record in self.paginate(self.ENDPOINT_PATH):
-                params = self._build_params(record, now)
-                self.db.execute(merge_sql, params)
-                count += 1
+        if len(results) < limit:
+            break
 
-            self.db.commit()
-            logging.info("Current ratings ingestion committed. Records=%d", count)
+        offset += limit
 
-        except Exception:
-            self.db.rollback()
-            logging.exception("Current ratings ingestion failed — rolled back")
-            raise
+    logging.info(f"Total current ratings fetched: {len(records)}")
+    return records
 
-        finally:
-            self.db.close()
 
-    @staticmethod
-    def _build_params(record: Dict[str, Any], now: datetime):
-        company = record.get("company") or {}
-        industry = record.get("industry") or {}
-        sub_industry = record.get("sub_industry") or {}
+def _normalize_current_rating(obj: Dict[str, Any], ingested_at: datetime) -> Dict[str, Any]:
+    """
+    Map current rating object into dbo.bitsight_current_ratings schema.
+    """
 
-        guid = company.get("guid")
-        if not guid:
-            raise ValueError("Missing required field: company.guid")
+    company = obj.get("company") or {}
+    industry = obj.get("industry") or {}
+    sub_industry = obj.get("sub_industry") or {}
 
-        raw_payload = json.dumps(record, ensure_ascii=False)
+    return {
+        "company_guid": company.get("guid"),
+        "rating": obj.get("rating"),
+        "rating_date": obj.get("rating_date"),
+        "network_size_v4": obj.get("network_size_v4"),
+        "industry_name": industry.get("name"),
+        "industry_slug": industry.get("slug"),
+        "sub_industry_name": sub_industry.get("name"),
+        "sub_industry_slug": sub_industry.get("slug"),
+        "ingested_at": ingested_at,
+        "raw_payload": obj,
+    }
 
-        return (
-            # MERGE key
-            guid,
 
-            # UPDATE values
-            company.get("name"),
-            record.get("rating"),
-            record.get("rating_date"),
-            record.get("rating_level"),
-            industry.get("name"),
-            industry.get("slug"),
-            sub_industry.get("name"),
-            sub_industry.get("slug"),
-            record.get("network_size_v4"),
-            now,
-            raw_payload,
-
-            # INSERT values
-            guid,
-            company.get("name"),
-            record.get("rating"),
-            record.get("rating_date"),
-            record.get("rating_level"),
-            industry.get("name"),
-            industry.get("slug"),
-            sub_industry.get("name"),
-            sub_industry.get("slug"),
-            record.get("network_size_v4"),
-            now,
-            raw_payload,
-        )
+def _absolutize_next(current_url: str, next_link: str) -> str:
+    if next_link.startswith("http://") or next_link.startswith("https://"):
+        return next_link
+    return urljoin(current_url, next_link)
