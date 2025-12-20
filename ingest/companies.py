@@ -8,11 +8,6 @@ from ingest.base import BitSightIngestBase
 
 
 class CompaniesIngest(BitSightIngestBase):
-    """
-    Ingest Companies
-    Endpoint: GET /ratings/v1/companies
-    """
-
     ENDPOINT_PATH = "/ratings/v1/companies"
 
     def __init__(
@@ -22,14 +17,10 @@ class CompaniesIngest(BitSightIngestBase):
         proxies: Optional[Dict[str, str]] = None,
         timeout: Optional[int] = None,
     ):
-        # Deterministic config sourcing for now:
-        # - explicit args win
-        # - else environment variables
         api_key = api_key or os.getenv("BITSIGHT_API_KEY")
         base_url = base_url or os.getenv("BITSIGHT_BASE_URL", "https://api.bitsighttech.com")
         timeout = timeout if timeout is not None else int(os.getenv("BITSIGHT_TIMEOUT", "60"))
 
-        # Optional proxy support via env until config layer is wired
         if proxies is None:
             proxy_url = os.getenv("BITSIGHT_PROXY_URL")
             if proxy_url:
@@ -46,25 +37,21 @@ class CompaniesIngest(BitSightIngestBase):
         )
 
     def run(self) -> None:
-        logging.info("Ingesting companies from %s", self.ENDPOINT_PATH)
+        logging.info("Ingesting companies")
 
-        retrieved = 0
-        processed = 0
-
+        count = 0
         for company in self._iter_companies():
-            retrieved += 1
-            self._process_company(company)
-            processed += 1
+            self._handle_company(company)
+            count += 1
 
-        logging.info("Companies ingestion complete. Retrieved=%d Processed=%d", retrieved, processed)
+        logging.info("Companies ingestion completed. Count=%d", count)
 
     def _iter_companies(self) -> Iterable[Dict[str, Any]]:
-        # Pagination handled by BitSightIngestBase.paginate()
         return self.paginate(self.ENDPOINT_PATH)
 
-    def _process_company(self, company: Dict[str, Any]) -> None:
-        # This is where DB upsert will go later.
-        # For now: deterministic logging only (no prints).
-        guid = company.get("guid")
-        name = company.get("name")
-        logging.debug("Company: guid=%s name=%s", guid, name)
+    def _handle_company(self, company: Dict[str, Any]) -> None:
+        logging.debug(
+            "Company retrieved guid=%s name=%s",
+            company.get("guid"),
+            company.get("name"),
+        )
