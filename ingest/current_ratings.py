@@ -4,7 +4,7 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 
 # BitSight Current Ratings endpoint
 BITSIGHT_CURRENT_RATINGS_ENDPOINT = "/ratings/v1/current-ratings"
@@ -19,7 +19,7 @@ def fetch_current_ratings(
 ) -> List[Dict[str, Any]]:
     """
     Fetch current security ratings for all companies.
-    Deterministic pagination using links.next.
+    Deterministic pagination using links.next when present.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
@@ -60,7 +60,11 @@ def fetch_current_ratings(
 
         if next_link:
             url = _absolutize_next(url, next_link)
-            offset += limit
+            next_offset = _extract_offset(url)
+            if next_offset is not None:
+                offset = next_offset
+            else:
+                offset += limit
             continue
 
         if len(results) < limit:
@@ -78,18 +82,11 @@ def _normalize_current_rating(obj: Dict[str, Any], ingested_at: datetime) -> Dic
     """
 
     company = obj.get("company") or {}
-    industry = obj.get("industry") or {}
-    sub_industry = obj.get("sub_industry") or {}
 
     return {
         "company_guid": company.get("guid"),
         "rating": obj.get("rating"),
         "rating_date": obj.get("rating_date"),
-        "network_size_v4": obj.get("network_size_v4"),
-        "industry_name": industry.get("name"),
-        "industry_slug": industry.get("slug"),
-        "sub_industry_name": sub_industry.get("name"),
-        "sub_industry_slug": sub_industry.get("slug"),
         "ingested_at": ingested_at,
         "raw_payload": obj,
     }
@@ -99,3 +96,13 @@ def _absolutize_next(current_url: str, next_link: str) -> str:
     if next_link.startswith("http://") or next_link.startswith("https://"):
         return next_link
     return urljoin(current_url, next_link)
+
+
+def _extract_offset(url: str) -> Optional[int]:
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if "offset" in qs and qs["offset"]:
+            return int(qs["offset"][0])
+    except Exception:
+        return None
+    return None
