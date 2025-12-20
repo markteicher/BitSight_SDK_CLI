@@ -1,6 +1,7 @@
 /* ============================================================
    BitSight SDK + CLI
    Full MSSQL Schema
+   (Revised – core schema corrections applied)
    ============================================================ */
 
 -- =========================
@@ -42,16 +43,18 @@ CREATE TABLE dbo.bitsight_user_quota (
 -- COMPANIES
 -- =========================
 CREATE TABLE dbo.bitsight_companies (
-    company_guid      UNIQUEIDENTIFIER NOT NULL,
-    name              NVARCHAR(255) NOT NULL,
-    domain            NVARCHAR(255) NULL,
-    industry           NVARCHAR(255) NULL,
-    sub_industry       NVARCHAR(255) NULL,
-    country           NVARCHAR(64) NULL,
-    added_date        DATETIME2 NULL,
-    rating            INT NULL,
-    ingested_at       DATETIME2 NOT NULL,
-    raw_payload       NVARCHAR(MAX) NOT NULL,
+    company_guid        UNIQUEIDENTIFIER NOT NULL,
+    name                NVARCHAR(255) NOT NULL,
+    domain              NVARCHAR(255) NULL,
+    industry_name       NVARCHAR(255) NULL,
+    industry_slug       NVARCHAR(255) NULL,
+    sub_industry_name   NVARCHAR(255) NULL,
+    sub_industry_slug   NVARCHAR(255) NULL,
+    country             NVARCHAR(64) NULL,
+    added_date          DATETIME2 NULL,
+    rating              INT NULL,
+    ingested_at         DATETIME2 NOT NULL,
+    raw_payload         NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_companies PRIMARY KEY (company_guid)
 );
 
@@ -59,18 +62,20 @@ CREATE TABLE dbo.bitsight_companies (
 -- PORTFOLIO
 -- =========================
 CREATE TABLE dbo.bitsight_portfolio (
-    company_guid           UNIQUEIDENTIFIER NOT NULL,
-    name                   NVARCHAR(255) NOT NULL,
-    rating                 INT NULL,
-    rating_date            DATE NULL,
-    tier_name              NVARCHAR(255) NULL,
-    relationship_name      NVARCHAR(255) NULL,
-    subscription_type      NVARCHAR(255) NULL,
-    life_cycle             NVARCHAR(255) NULL,
-    network_size_v4        INT NULL,
-    added_date             DATE NULL,
-    ingested_at            DATETIME2 NOT NULL,
-    raw_payload            NVARCHAR(MAX) NOT NULL,
+    company_guid             UNIQUEIDENTIFIER NOT NULL,
+    name                     NVARCHAR(255) NOT NULL,
+    rating                   INT NULL,
+    rating_date              DATE NULL,
+    tier_name                NVARCHAR(255) NULL,
+    relationship_name        NVARCHAR(255) NULL,
+    subscription_type_name   NVARCHAR(255) NULL,
+    subscription_type_slug   NVARCHAR(255) NULL,
+    life_cycle_name          NVARCHAR(255) NULL,
+    life_cycle_slug          NVARCHAR(255) NULL,
+    network_size_v4          INT NULL,
+    added_date               DATE NULL,
+    ingested_at              DATETIME2 NOT NULL,
+    raw_payload              NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_portfolio PRIMARY KEY (company_guid)
 );
 
@@ -78,11 +83,16 @@ CREATE TABLE dbo.bitsight_portfolio (
 -- CURRENT RATINGS
 -- =========================
 CREATE TABLE dbo.bitsight_current_ratings (
-    company_guid      UNIQUEIDENTIFIER NOT NULL,
-    rating            INT NOT NULL,
-    rating_date       DATE NOT NULL,
-    ingested_at       DATETIME2 NOT NULL,
-    raw_payload       NVARCHAR(MAX) NOT NULL,
+    company_guid        UNIQUEIDENTIFIER NOT NULL,
+    rating              INT NOT NULL,
+    rating_date         DATE NOT NULL,
+    network_size_v4     INT NULL,
+    industry_name       NVARCHAR(255) NULL,
+    industry_slug       NVARCHAR(255) NULL,
+    sub_industry_name   NVARCHAR(255) NULL,
+    sub_industry_slug   NVARCHAR(255) NULL,
+    ingested_at         DATETIME2 NOT NULL,
+    raw_payload         NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_current_ratings PRIMARY KEY (company_guid)
 );
 
@@ -103,16 +113,16 @@ CREATE TABLE dbo.bitsight_ratings_history (
 -- FINDINGS
 -- =========================
 CREATE TABLE dbo.bitsight_findings (
-    finding_guid      UNIQUEIDENTIFIER NOT NULL,
-    company_guid      UNIQUEIDENTIFIER NOT NULL,
-    risk_vector       NVARCHAR(128) NULL,
-    severity          NVARCHAR(64) NULL,
-    status            NVARCHAR(64) NULL,
-    first_seen_date   DATE NULL,
-    last_seen_date    DATE NULL,
-    remediation_date DATE NULL,
-    ingested_at       DATETIME2 NOT NULL,
-    raw_payload       NVARCHAR(MAX) NOT NULL,
+    finding_guid       UNIQUEIDENTIFIER NOT NULL,
+    company_guid       UNIQUEIDENTIFIER NOT NULL,
+    risk_vector        NVARCHAR(128) NULL,
+    severity           NVARCHAR(64) NULL,
+    status             NVARCHAR(64) NULL,
+    first_seen_date    DATE NULL,
+    last_seen_date     DATE NULL,
+    remediation_date   DATE NULL,
+    ingested_at        DATETIME2 NOT NULL,
+    raw_payload        NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_findings PRIMARY KEY (finding_guid)
 );
 
