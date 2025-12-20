@@ -65,13 +65,13 @@ CREATE TABLE dbo.bitsight_user_company_views (
 -- COMPANIES
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_companies (
-    company_guid      UNIQUEIDENTIFIER NOT NULL,
-    name              NVARCHAR(255),
-    domain            NVARCHAR(255),
-    country           NVARCHAR(64),
-    added_date        DATETIME2,
-    ingested_at       DATETIME2 NOT NULL,
-    raw_payload       NVARCHAR(MAX) NOT NULL,
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    name         NVARCHAR(255),
+    domain       NVARCHAR(255),
+    country      NVARCHAR(64),
+    added_date   DATETIME2,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_companies PRIMARY KEY (company_guid)
 );
 
@@ -182,10 +182,10 @@ CREATE TABLE dbo.bitsight_exposed_credentials (
 -- NEWS
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_news (
-    news_guid   UNIQUEIDENTIFIER NOT NULL,
+    news_guid    UNIQUEIDENTIFIER NOT NULL,
     published_at DATETIME2,
-    ingested_at DATETIME2 NOT NULL,
-    raw_payload NVARCHAR(MAX) NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_news PRIMARY KEY (news_guid)
 );
 
@@ -204,18 +204,54 @@ CREATE TABLE dbo.bitsight_insights (
 -- SUBSIDIARIES
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_subsidiaries (
-    subsidiary_guid UNIQUEIDENTIFIER NOT NULL,
-    parent_company_guid UNIQUEIDENTIFIER,
-    ingested_at DATETIME2 NOT NULL,
-    raw_payload NVARCHAR(MAX) NOT NULL,
+    subsidiary_guid      UNIQUEIDENTIFIER NOT NULL,
+    parent_company_guid  UNIQUEIDENTIFIER,
+    ingested_at          DATETIME2 NOT NULL,
+    raw_payload          NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_subsidiaries PRIMARY KEY (subsidiary_guid)
 );
 
 CREATE TABLE dbo.bitsight_subsidiary_statistics (
     subsidiary_guid UNIQUEIDENTIFIER NOT NULL,
-    ingested_at DATETIME2 NOT NULL,
-    raw_payload NVARCHAR(MAX) NOT NULL,
+    ingested_at     DATETIME2 NOT NULL,
+    raw_payload     NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_subsidiary_statistics PRIMARY KEY (subsidiary_guid)
+);
+
+---------------------------------------------------------------
+-- COMPLIANCE REPORTS
+---------------------------------------------------------------
+CREATE TABLE dbo.bitsight_nist_csf_reports (
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_nist_csf_reports
+        PRIMARY KEY (company_guid, ingested_at)
+);
+
+---------------------------------------------------------------
+-- REPORT DOWNLOADS & EXECUTIVE REPORTS
+---------------------------------------------------------------
+CREATE TABLE dbo.bitsight_reports (
+    report_id     NVARCHAR(255) NOT NULL,
+    report_type   NVARCHAR(128) NOT NULL,
+    company_guid  UNIQUEIDENTIFIER NULL,
+    status        NVARCHAR(64) NULL,
+    requested_at  DATETIME2 NULL,
+    completed_at  DATETIME2 NULL,
+    ingested_at   DATETIME2 NOT NULL,
+    raw_payload   NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_reports PRIMARY KEY (report_id)
+);
+
+---------------------------------------------------------------
+-- GLOBAL STATISTICS & SUMMARIES
+---------------------------------------------------------------
+CREATE TABLE dbo.bitsight_statistics (
+    scope        NVARCHAR(64) NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_statistics PRIMARY KEY (scope)
 );
 
 ---------------------------------------------------------------
