@@ -2,93 +2,65 @@
 
 import logging
 import requests
+import csv
+import io
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
 
-# BitSight Ratings History endpoint
-BITSIGHT_RATINGS_HISTORY_ENDPOINT = "/ratings/v1/ratings-history"
+BITSIGHT_RATINGS_HISTORY_ENDPOINT = (
+    "/ratings/v1/companies/{company_guid}/reports/ratings-history"
+)
 
 
-def fetch_ratings_history(
+def fetch_ratings_history_for_company(
     session: requests.Session,
     base_url: str,
     api_key: str,
+    company_guid: str,
     timeout: int = 60,
     proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch historical security ratings for all companies.
-    Deterministic pagination using links.next when present.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+    Fetch ratings history (daily, 1 year) for a single company.
+    Endpoint returns CSV.
     """
 
     if base_url.endswith("/"):
         base_url = base_url[:-1]
 
-    url = f"{base_url}{BITSIGHT_RATINGS_HISTORY_ENDPOINT}"
-    headers = {"Accept": "application/json"}
-
-    records: List[Dict[str, Any]] = []
+    url = f"{base_url}{BITSIGHT_RATINGS_HISTORY_ENDPOINT.format(company_guid=company_guid)}"
+    headers = {"Accept": "text/csv"}
     ingested_at = datetime.utcnow()
 
-    limit = 100
-    offset = 0
+    logging.info(f"Fetching ratings history for company {company_guid}")
 
-    while True:
-        params = {"limit": limit, "offset": offset}
-        logging.info(f"Fetching ratings history: {url} (limit={limit}, offset={offset})")
+    resp = session.get(
+        url,
+        headers=headers,
+        auth=(api_key, ""),
+        params={"format": "csv"},
+        timeout=timeout,
+        proxies=proxies,
+    )
+    resp.raise_for_status()
 
-        resp = session.get(
-            url,
-            headers=headers,
-            auth=(api_key, ""),
-            params=params,
-            timeout=timeout,
-            proxies=proxies,
+    csv_data = resp.text
+    reader = csv.DictReader(io.StringIO(csv_data))
+
+    records: List[Dict[str, Any]] = []
+
+    for row in reader:
+        rating_date = row.get("date") or row.get("rating_date")
+        rating = row.get("rating")
+
+        records.append(
+            {
+                "company_guid": company_guid,
+                "rating_date": rating_date,
+                "rating": int(rating) if rating else None,
+                "ingested_at": ingested_at,
+                "raw_payload": row,
+            }
         )
-        resp.raise_for_status()
 
-        payload = resp.json()
-        results = payload.get("results", [])
-
-        for obj in results:
-            records.append(_normalize_rating_history(obj, ingested_at))
-
-        links = payload.get("links") or {}
-        next_link = links.get("next")
-
-        if next_link:
-            url = _absolutize_next(url, next_link)
-            offset += limit
-            continue
-
-        if len(results) < limit:
-            break
-
-        offset += limit
-
-    logging.info(f"Total ratings history records fetched: {len(records)}")
     return records
-
-
-def _normalize_rating_history(obj: Dict[str, Any], ingested_at: datetime) -> Dict[str, Any]:
-    """
-    Map ratings history object into dbo.bitsight_ratings_history schema.
-    """
-
-    company = obj.get("company") or {}
-
-    return {
-        "company_guid": company.get("guid"),
-        "rating_date": obj.get("rating_date"),
-        "rating": obj.get("rating"),
-        "ingested_at": ingested_at,
-        "raw_payload": obj,
-    }
-
-
-def _absolutize_next(current_url: str, next_link: str) -> str:
-    if next_link.startswith("http://") or next_link.startswith("https://"):
-        return next_link
-    return urljoin(current_url, next_link)
