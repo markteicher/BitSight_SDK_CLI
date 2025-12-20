@@ -5,10 +5,7 @@ import requests
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-# BitSight NIST CSF Report endpoint
-BITSIGHT_NIST_CSF_REPORT_ENDPOINT = (
-    "/ratings/v1/companies/{company_guid}/reports/nist-csf"
-)
+BITSIGHT_NIST_CSF_REPORT_ENDPOINT = "/companies/{company_guid}/regulatory/nist"
 
 
 def fetch_nist_csf_report(
@@ -21,7 +18,11 @@ def fetch_nist_csf_report(
 ) -> Dict[str, Any]:
     """
     Fetch the NIST CSF report for a company.
-    This is a report-style endpoint returning structured compliance data.
+
+    Documented endpoint:
+      GET /companies/{company_guid}/regulatory/nist
+
+    Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
     if base_url.endswith("/"):
@@ -31,9 +32,7 @@ def fetch_nist_csf_report(
     headers = {"Accept": "application/json"}
     ingested_at = datetime.utcnow()
 
-    logging.info(
-        f"Fetching NIST CSF report for company {company_guid}"
-    )
+    logging.info(f"Fetching NIST CSF report for company {company_guid}: {url}")
 
     resp = session.get(
         url,
