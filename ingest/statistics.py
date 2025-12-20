@@ -43,6 +43,7 @@ def fetch_statistics(
     payload = resp.json()
 
     return {
+        "scope": "global",
         "ingested_at": ingested_at,
         "raw_payload": payload,
     }
