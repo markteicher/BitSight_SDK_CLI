@@ -5,6 +5,9 @@ import logging
 import sys
 from tqdm import tqdm
 
+# ----------------------------------------------------------------------
+# logging
+# ----------------------------------------------------------------------
 
 def setup_logging(verbose: bool):
     level = logging.DEBUG if verbose else logging.INFO
@@ -16,20 +19,9 @@ def setup_logging(verbose: bool):
     )
 
 
-def run_ingest(command_name: str, **kwargs):
-    logging.info("Starting ingestion: %s", command_name)
-
-    use_progress = not kwargs.get("no_progress", False)
-
-    iterator = range(1)
-    if use_progress:
-        iterator = tqdm(iterator, desc=command_name)
-
-    for _ in iterator:
-        pass
-
-    logging.info("Completed ingestion: %s", command_name)
-
+# ----------------------------------------------------------------------
+# main
+# ----------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
@@ -37,6 +29,7 @@ def main():
         description="BitSight SDK + CLI"
     )
 
+    # global flags
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -176,15 +169,40 @@ def main():
     status_sub.add_parser("last-run")
     status_sub.add_parser("health")
 
+    # ------------------------------------------------------------------
+    # parse + runtime
+    # ------------------------------------------------------------------
     args = parser.parse_args()
-
     setup_logging(args.verbose)
     logging.debug("CLI arguments: %s", vars(args))
 
+    # ------------------------------------------------------------------
+    # dispatch (thin wiring only)
+    # ------------------------------------------------------------------
     if args.command == "ingest":
-        run_ingest(args.subcommand, **vars(args))
+        if args.subcommand == "users":
+            from ingest.users import UsersIngest
+            UsersIngest().run()
+
+        elif args.subcommand == "companies":
+            from ingest.companies import CompaniesIngest
+            CompaniesIngest().run()
+
+        elif args.subcommand == "current-ratings":
+            from ingest.current_ratings import CurrentRatingsIngest
+            CurrentRatingsIngest().run()
+
+        elif args.subcommand == "alerts":
+            from ingest.alerts import AlertsIngest
+            AlertsIngest(since=args.since).run()
+
+        else:
+            logging.error("Unhandled ingest command: %s", args.subcommand)
+            sys.exit(1)
+
     elif args.command == "ingest-group":
         logging.info("Running ingest group: %s", args.subcommand)
+
     else:
         logging.info("Command executed: %s %s", args.command, args.subcommand)
 
