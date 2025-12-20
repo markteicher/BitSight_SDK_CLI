@@ -1,11 +1,51 @@
+#!/usr/bin/env python3
+
 import argparse
+import logging
 import sys
+from tqdm import tqdm
+
+
+def setup_logging(verbose: bool):
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+
+
+def run_ingest(command_name: str, **kwargs):
+    logging.info("Starting ingestion: %s", command_name)
+
+    use_progress = not kwargs.get("no_progress", False)
+
+    iterator = range(1)
+    if use_progress:
+        iterator = tqdm(iterator, desc=command_name)
+
+    for _ in iterator:
+        pass
+
+    logging.info("Completed ingestion: %s", command_name)
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="bitsight",
         description="BitSight SDK + CLI"
+    )
+
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable debug logging"
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress bars (CI-safe)"
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -65,23 +105,17 @@ def main():
             for arg in extra_args:
                 p.add_argument(*arg[0], **arg[1])
         p.add_argument("--flush", action="store_true")
+        p.set_defaults(handler=name.replace("-", "_"))
         return p
 
-    ingest_cmd("users", [
-        (["--limit"], {"type": int})
-    ])
-
+    ingest_cmd("users")
     ingest_cmd("user-details", [
         (["--user-guid"], {})
     ])
-
     ingest_cmd("user-quota")
     ingest_cmd("user-company-views")
 
-    ingest_cmd("companies", [
-        (["--limit"], {"type": int})
-    ])
-
+    ingest_cmd("companies")
     ingest_cmd("company-details", [
         (["--company-guid"], {})
     ])
@@ -123,7 +157,7 @@ def main():
     ingest_cmd("exposed-credentials")
 
     # ------------------------------------------------------------------
-    # ingest-group (orchestration)
+    # ingest-group
     # ------------------------------------------------------------------
     ingest_group = subparsers.add_parser("ingest-group", help="Grouped ingestion")
     ingest_group_sub = ingest_group.add_subparsers(dest="subcommand", required=True)
@@ -142,15 +176,17 @@ def main():
     status_sub.add_parser("last-run")
     status_sub.add_parser("health")
 
-    # ------------------------------------------------------------------
-    # dispatch
-    # ------------------------------------------------------------------
     args = parser.parse_args()
 
-    # Placeholder dispatch
-    print("COMMAND:", args.command)
-    print("SUBCOMMAND:", args.subcommand)
-    print("ARGS:", vars(args))
+    setup_logging(args.verbose)
+    logging.debug("CLI arguments: %s", vars(args))
+
+    if args.command == "ingest":
+        run_ingest(args.subcommand, **vars(args))
+    elif args.command == "ingest-group":
+        logging.info("Running ingest group: %s", args.subcommand)
+    else:
+        logging.info("Command executed: %s %s", args.command, args.subcommand)
 
 
 if __name__ == "__main__":
