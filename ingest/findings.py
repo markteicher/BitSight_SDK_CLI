@@ -4,7 +4,7 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 
 # BitSight Findings endpoint (per company)
 BITSIGHT_COMPANY_FINDINGS_ENDPOINT = "/ratings/v1/companies/{company_guid}/findings"
@@ -58,14 +58,25 @@ def fetch_findings(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append(_normalize_finding(obj, company_guid, ingested_at))
+            records.append(
+                {
+                    "finding_guid": obj.get("guid"),
+                    "company_guid": company_guid,
+                    "ingested_at": ingested_at,
+                    "raw_payload": obj,
+                }
+            )
 
         links = payload.get("links") or {}
         next_link = links.get("next")
 
         if next_link:
             url = _absolutize_next(url, next_link)
-            offset += limit
+            next_offset = _extract_offset(url)
+            if next_offset is not None:
+                offset = next_offset
+            else:
+                offset += limit
             continue
 
         if len(results) < limit:
@@ -79,32 +90,17 @@ def fetch_findings(
     return records
 
 
-def _normalize_finding(
-    obj: Dict[str, Any],
-    company_guid: str,
-    ingested_at: datetime,
-) -> Dict[str, Any]:
-    """
-    Map a finding object into dbo.bitsight_findings schema.
-    """
-
-    return {
-        "finding_guid": obj.get("guid"),
-        "company_guid": company_guid,
-        "risk_vector": obj.get("risk_vector"),
-        "severity": (obj.get("severity") or {}).get("level")
-        if isinstance(obj.get("severity"), dict)
-        else obj.get("severity"),
-        "status": obj.get("status"),
-        "first_seen_date": obj.get("first_seen_date"),
-        "last_seen_date": obj.get("last_seen_date"),
-        "remediation_date": obj.get("remediation_date"),
-        "ingested_at": ingested_at,
-        "raw_payload": obj,
-    }
-
-
 def _absolutize_next(current_url: str, next_link: str) -> str:
     if next_link.startswith("http://") or next_link.startswith("https://"):
         return next_link
     return urljoin(current_url, next_link)
+
+
+def _extract_offset(url: str) -> Optional[int]:
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if "offset" in qs and qs["offset"]:
+            return int(qs["offset"][0])
+    except Exception:
+        return None
+    return None
