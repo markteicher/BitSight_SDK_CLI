@@ -3,53 +3,123 @@
 import logging
 import requests
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
+from urllib.parse import urljoin, urlparse, parse_qs
 
-# BitSight Finding Details endpoint
-BITSIGHT_FINDING_DETAILS_ENDPOINT = "/ratings/v1/findings/{finding_guid}"
+# BitSight Finding Details endpoint (per company)
+BITSIGHT_FINDING_DETAILS_ENDPOINT = "/ratings/v1/companies/{company_guid}/findings"
 
 
 def fetch_finding_details(
     session: requests.Session,
     base_url: str,
     api_key: str,
-    finding_guid: str,
+    company_guid: str,
+    risk_category: Optional[str] = None,
     timeout: int = 60,
     proxies: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
+    extra_params: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     """
-    Fetch detailed information for a single finding.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+    Fetch finding details for a single company.
+
+    Endpoint:
+        GET /ratings/v1/companies/{company_guid}/findings
+
+    Supports query parameters such as:
+        - risk_category=<...>
+        - plus any others via extra_params
+
+    Deterministic pagination using links.next when present.
+
+    Auth:
+        HTTP Basic Auth using api_key as username and blank password.
     """
 
     if base_url.endswith("/"):
         base_url = base_url[:-1]
 
-    endpoint = BITSIGHT_FINDING_DETAILS_ENDPOINT.format(
-        finding_guid=finding_guid
-    )
+    endpoint = BITSIGHT_FINDING_DETAILS_ENDPOINT.format(company_guid=company_guid)
     url = f"{base_url}{endpoint}"
-
     headers = {"Accept": "application/json"}
+
+    records: List[Dict[str, Any]] = []
     ingested_at = datetime.utcnow()
 
-    logging.info(f"Fetching finding details: {url}")
+    limit = 100
+    offset = 0
 
-    resp = session.get(
-        url,
-        headers=headers,
-        auth=(api_key, ""),
-        timeout=timeout,
-        proxies=proxies,
+    while True:
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if risk_category:
+            params["risk_category"] = risk_category
+
+        if extra_params:
+            # caller-controlled; no guessing here
+            params.update(extra_params)
+
+        logging.info(
+            f"Fetching finding details for company {company_guid}: {url} "
+            f"(limit={limit}, offset={offset})"
+        )
+
+        resp = session.get(
+            url,
+            headers=headers,
+            auth=(api_key, ""),
+            params=params,
+            timeout=timeout,
+            proxies=proxies,
+        )
+        resp.raise_for_status()
+
+        payload = resp.json()
+        results = payload.get("results", [])
+
+        for obj in results:
+            records.append(
+                {
+                    "company_guid": company_guid,
+                    "ingested_at": ingested_at,
+                    "raw_payload": obj,
+                }
+            )
+
+        links = payload.get("links") or {}
+        next_link = links.get("next")
+
+        if next_link:
+            url = _absolutize_next(url, next_link)
+            next_offset = _extract_offset(url)
+            if next_offset is not None:
+                offset = next_offset
+            else:
+                offset += limit
+            continue
+
+        if len(results) < limit:
+            break
+
+        offset += limit
+
+    logging.info(
+        f"Total finding details fetched for company {company_guid}: {len(records)}"
     )
-    resp.raise_for_status()
+    return records
 
-    payload = resp.json()
 
-    record = {
-        "finding_guid": finding_guid,
-        "ingested_at": ingested_at,
-        "raw_payload": payload,
-    }
+def _absolutize_next(current_url: str, next_link: str) -> str:
+    if next_link.startswith("http://") or next_link.startswith("https://"):
+        return next_link
+    return urljoin(current_url, next_link)
 
-    return record
+
+def _extract_offset(url: str) -> Optional[int]:
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if "offset" in qs and qs["offset"]:
+            return int(qs["offset"][0])
+    except Exception:
+        return None
+    return None
