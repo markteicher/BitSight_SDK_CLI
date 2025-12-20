@@ -1,205 +1,106 @@
 #!/usr/bin/env python3
 
-import json
 import logging
-import os
+import requests
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Dict, Any, List, Optional
+from urllib.parse import urljoin
 
-from ingest.base import BitSightIngestBase
-from db.mssql import MSSQLDatabase
+# BitSight Portfolio endpoint
+BITSIGHT_PORTFOLIO_ENDPOINT = "/ratings/v2/portfolio"
 
 
-class PortfolioIngest(BitSightIngestBase):
-    ENDPOINT_PATH = "/ratings/v2/portfolio"
+def fetch_portfolio(
+    session: requests.Session,
+    base_url: str,
+    api_key: str,
+    timeout: int = 60,
+    proxies: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch the BitSight portfolio.
+    Deterministic pagination using links.next when present.
+    Auth: HTTP Basic Auth using api_key as username and blank password.
+    """
 
-    def __init__(self):
-        super().__init__(
-            api_key=os.environ["BITSIGHT_API_KEY"],
-            base_url=os.environ.get("BITSIGHT_BASE_URL", "https://api.bitsighttech.com"),
-            proxies=self._env_proxies(),
-            timeout=int(os.environ.get("BITSIGHT_TIMEOUT", "60")),
+    if base_url.endswith("/"):
+        base_url = base_url[:-1]
+
+    url = f"{base_url}{BITSIGHT_PORTFOLIO_ENDPOINT}"
+    headers = {"Accept": "application/json"}
+
+    records: List[Dict[str, Any]] = []
+    ingested_at = datetime.utcnow()
+
+    limit = 100
+    offset = 0
+
+    while True:
+        params = {"limit": limit, "offset": offset}
+        logging.info(f"Fetching portfolio: {url} (limit={limit}, offset={offset})")
+
+        resp = session.get(
+            url,
+            headers=headers,
+            auth=(api_key, ""),
+            params=params,
+            timeout=timeout,
+            proxies=proxies,
         )
+        resp.raise_for_status()
 
-        self.db = MSSQLDatabase(
-            server=os.environ["MSSQL_SERVER"],
-            database=os.environ["MSSQL_DATABASE"],
-            username=os.environ["MSSQL_USERNAME"],
-            password=os.environ["MSSQL_PASSWORD"],
-        )
+        payload = resp.json()
+        results = payload.get("results", [])
 
-    @staticmethod
-    def _env_proxies() -> Optional[Dict[str, str]]:
-        proxy_url = os.environ.get("BITSIGHT_PROXY_URL")
-        if not proxy_url:
-            return None
-        return {"http": proxy_url, "https": proxy_url}
+        for item in results:
+            records.append(_normalize_portfolio_record(item, ingested_at))
 
-    def run(self) -> None:
-        logging.info("Ingesting BitSight portfolio into MSSQL")
+        links = payload.get("links") or {}
+        next_link = links.get("next")
 
-        merge_sql = """
-        MERGE dbo.bitsight_portfolio AS target
-        USING (SELECT ? AS guid) AS source
-        ON target.guid = source.guid
-        WHEN MATCHED THEN
-            UPDATE SET
-                custom_id = ?,
-                name = ?,
-                shortname = ?,
-                network_size_v4 = ?,
-                rating = ?,
-                rating_date = ?,
-                added_date = ?,
-                industry_name = ?,
-                industry_slug = ?,
-                sub_industry_name = ?,
-                sub_industry_slug = ?,
-                type_json = ?,
-                logo = ?,
-                sparkline = ?,
-                subscription_type_name = ?,
-                subscription_type_slug = ?,
-                primary_domain = ?,
-                display_url = ?,
-                tier = ?,
-                tier_name = ?,
-                life_cycle_name = ?,
-                life_cycle_slug = ?,
-                relationship_name = ?,
-                relationship_slug = ?,
-                ingested_at = ?,
-                raw_payload = ?
-        WHEN NOT MATCHED THEN
-            INSERT (
-                guid,
-                custom_id,
-                name,
-                shortname,
-                network_size_v4,
-                rating,
-                rating_date,
-                added_date,
-                industry_name,
-                industry_slug,
-                sub_industry_name,
-                sub_industry_slug,
-                type_json,
-                logo,
-                sparkline,
-                subscription_type_name,
-                subscription_type_slug,
-                primary_domain,
-                display_url,
-                tier,
-                tier_name,
-                life_cycle_name,
-                life_cycle_slug,
-                relationship_name,
-                relationship_slug,
-                ingested_at,
-                raw_payload
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            );
-        """
+        if next_link:
+            url = _absolutize_next(url, next_link)
+            offset += limit
+            continue
 
-        now = datetime.utcnow()
+        if len(results) < limit:
+            break
 
-        try:
-            count = 0
-            for rec in self.paginate(self.ENDPOINT_PATH):
-                params = self._params_for_merge(rec, now)
-                self.db.execute(merge_sql, params)
-                count += 1
+        offset += limit
 
-            self.db.commit()
-            logging.info("Portfolio ingestion committed. Records=%d", count)
+    logging.info(f"Total portfolio records fetched: {len(records)}")
+    return records
 
-        except Exception:
-            self.db.rollback()
-            logging.exception("Portfolio ingestion failed — rolled back")
-            raise
 
-        finally:
-            self.db.close()
+def _normalize_portfolio_record(obj: Dict[str, Any], ingested_at: datetime) -> Dict[str, Any]:
+    """
+    Map portfolio object into dbo.bitsight_portfolio schema.
+    """
+    company = obj.get("company") or {}
+    rating = obj.get("rating") or {}
 
-    @staticmethod
-    def _params_for_merge(rec: Dict[str, Any], now: datetime):
-        industry = rec.get("industry") or {}
-        sub_industry = rec.get("sub_industry") or {}
-        subscription_type = rec.get("subscription_type") or {}
-        life_cycle = rec.get("life_cycle") or {}
-        relationship = rec.get("relationship") or {}
+    subscription = obj.get("subscription_type") or {}
+    lifecycle = obj.get("life_cycle") or {}
 
-        guid = rec.get("guid")
-        if not guid:
-            raise ValueError("Portfolio record missing required field: guid")
+    return {
+        "company_guid": company.get("guid"),
+        "name": company.get("name"),
+        "rating": rating.get("rating"),
+        "rating_date": rating.get("rating_date"),
+        "tier_name": (obj.get("tier") or {}).get("name"),
+        "relationship_name": (obj.get("relationship") or {}).get("name"),
+        "subscription_type_name": subscription.get("name"),
+        "subscription_type_slug": subscription.get("slug"),
+        "life_cycle_name": lifecycle.get("name"),
+        "life_cycle_slug": lifecycle.get("slug"),
+        "network_size_v4": obj.get("network_size_v4"),
+        "added_date": obj.get("added_date"),
+        "ingested_at": ingested_at,
+        "raw_payload": obj,
+    }
 
-        type_json = json.dumps(rec.get("type")) if "type" in rec else None
-        raw_payload = json.dumps(rec, ensure_ascii=False)
 
-        # MERGE source guid
-        p = [
-            guid,
-            rec.get("custom_id"),
-            rec.get("name"),
-            rec.get("shortname"),
-            rec.get("network_size_v4"),
-            rec.get("rating"),
-            rec.get("rating_date"),
-            rec.get("added_date"),
-            industry.get("name"),
-            industry.get("slug"),
-            sub_industry.get("name"),
-            sub_industry.get("slug"),
-            type_json,
-            rec.get("logo"),
-            rec.get("sparkline"),
-            subscription_type.get("name"),
-            subscription_type.get("slug"),
-            rec.get("primary_domain"),
-            rec.get("display_url"),
-            rec.get("tier"),
-            rec.get("tier_name"),
-            life_cycle.get("name"),
-            life_cycle.get("slug"),
-            relationship.get("name"),
-            relationship.get("slug"),
-            now,
-            raw_payload,
-        ]
-
-        # INSERT values (full row)
-        p.extend([
-            guid,
-            rec.get("custom_id"),
-            rec.get("name"),
-            rec.get("shortname"),
-            rec.get("network_size_v4"),
-            rec.get("rating"),
-            rec.get("rating_date"),
-            rec.get("added_date"),
-            industry.get("name"),
-            industry.get("slug"),
-            sub_industry.get("name"),
-            sub_industry.get("slug"),
-            type_json,
-            rec.get("logo"),
-            rec.get("sparkline"),
-            subscription_type.get("name"),
-            subscription_type.get("slug"),
-            rec.get("primary_domain"),
-            rec.get("display_url"),
-            rec.get("tier"),
-            rec.get("tier_name"),
-            life_cycle.get("name"),
-            life_cycle.get("slug"),
-            relationship.get("name"),
-            relationship.get("slug"),
-            now,
-            raw_payload,
-        ])
-
-        return tuple(p)
+def _absolutize_next(current_url: str, next_link: str) -> str:
+    if next_link.startswith("http://") or next_link.startswith("https://"):
+        return next_link
+    return urljoin(current_url, next_link)
