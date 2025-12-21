@@ -208,3 +208,7 @@ MSSQL schema file:
 Tables store `raw_payload` as `NVARCHAR(MAX)` to preserve the full API response alongside typed columns.
 
 ---
+
+## Support
+- Bitsight API Documentation: https://help.bitsighttech.com/hc/en-us/articles/231872628-API-Documentation-Overview
+
