@@ -1,126 +1,152 @@
 #!/usr/bin/env python3
 
-from __future__ import annotations
-
 import json
-from dataclasses import dataclass, asdict
+import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+from core.status_codes import StatusCode
 
 
-@dataclass
-class ProxyConfig:
-    url: Optional[str] = None
-    username: Optional[str] = None
-    password: Optional[str] = None
-
-
-@dataclass
-class MSSQLConfig:
-    server: Optional[str] = None
-    database: Optional[str] = None
-    username: Optional[str] = None
-    password: Optional[str] = None
-    driver: str = "ODBC Driver 18 for SQL Server"
-    encrypt: bool = True
-    trust_cert: bool = False
-    timeout: int = 30
-
-
-@dataclass
-class AppConfig:
-    api_key: Optional[str] = None
-    base_url: str = "https://api.bitsighttech.com"
-    timeout: int = 60
-    proxy: ProxyConfig = ProxyConfig()
-    db_type: str = "mssql"
-    mssql: MSSQLConfig = MSSQLConfig()
-
-
-class ConfigStore:
+class Config:
     """
-    Reads and writes config as JSON.
+    Deterministic configuration manager for BitSight SDK + CLI.
+
+    Responsibilities:
+      - Load configuration from disk
+      - Validate required keys
+      - Expose typed accessors
+      - Persist updates atomically
+      - Never silently mutate state
     """
 
-    def __init__(self, path: Optional[str] = None):
-        default_path = Path.home() / ".bitsight" / "config.json"
-        self.path = Path(path).expanduser() if path else default_path
+    DEFAULT_PATH = Path.home() / ".bitsight" / "config.json"
 
-    def exists(self) -> bool:
-        return self.path.exists()
+    # ------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------
+    def __init__(self, path: Optional[Path] = None):
+        self.path = path or self.DEFAULT_PATH
+        self._data: Dict[str, Any] = {}
 
-    def load(self) -> AppConfig:
+    # ------------------------------------------------------------
+    # Load / Save
+    # ------------------------------------------------------------
+    def load(self) -> None:
+        """
+        Load configuration from disk.
+        """
         if not self.path.exists():
-            return AppConfig()
+            logging.error("CONFIG_NOT_FOUND path=%s", self.path)
+            raise RuntimeError(StatusCode.CONFIG_MISSING)
 
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        return self._from_dict(data)
+        try:
+            raw = self.path.read_text(encoding="utf-8")
+            self._data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logging.error("CONFIG_PARSE_ERROR %s", e)
+            raise RuntimeError(StatusCode.CONFIG_INVALID) from e
+        except Exception as e:
+            logging.error("CONFIG_READ_FAILED %s", e)
+            raise RuntimeError(StatusCode.CONFIG_UNREADABLE) from e
 
-    def save(self, cfg: AppConfig) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = asdict(cfg)
-        self.path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        logging.info("CONFIG_LOADED path=%s", self.path)
+
+    def save(self) -> None:
+        """
+        Persist configuration to disk atomically.
+        """
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self.path.with_suffix(".tmp")
+
+            tmp_path.write_text(
+                json.dumps(self._data, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            tmp_path.replace(self.path)
+
+        except Exception as e:
+            logging.error("CONFIG_WRITE_FAILED %s", e)
+            raise RuntimeError(StatusCode.CONFIG_UNWRITABLE) from e
+
+        logging.info("CONFIG_SAVED path=%s", self.path)
+
+    # ------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------
+    def validate(self) -> None:
+        """
+        Validate presence and structure of required configuration.
+        """
+        self._require("api")
+        self._require("database")
+
+        api = self._data["api"]
+        self._require_key(api, "api_key")
+        self._require_key(api, "base_url")
+
+        db = self._data["database"]
+        self._require_key(db, "backend")
+
+        if db["backend"] == "mssql":
+            for k in ("server", "database", "username", "password"):
+                self._require_key(db, k)
+
+        logging.info("CONFIG_VALIDATED")
+
+    # ------------------------------------------------------------
+    # Mutation (explicit only)
+    # ------------------------------------------------------------
+    def set(self, section: str, key: str, value: Any) -> None:
+        """
+        Explicitly set a configuration value.
+        """
+        if section not in self._data:
+            self._data[section] = {}
+
+        self._data[section][key] = value
+        logging.debug("CONFIG_SET %s.%s", section, key)
 
     def reset(self) -> None:
-        if self.path.exists():
-            self.path.unlink()
+        """
+        Clear configuration in memory.
+        """
+        self._data.clear()
+        logging.info("CONFIG_RESET")
 
-    def clear_keys(self) -> None:
-        cfg = self.load()
-        cfg.api_key = None
-        if cfg.proxy:
-            cfg.proxy.password = None
-        if cfg.mssql:
-            cfg.mssql.password = None
-        self.save(cfg)
+    # ------------------------------------------------------------
+    # Accessors
+    # ------------------------------------------------------------
+    def api_key(self) -> str:
+        return self._get("api", "api_key")
+
+    def base_url(self) -> str:
+        return self._get("api", "base_url")
+
+    def proxy(self) -> Optional[Dict[str, str]]:
+        return self._data.get("api", {}).get("proxy")
+
+    def database(self) -> Dict[str, Any]:
+        return self._data["database"]
+
+    # ------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------
+    def _get(self, section: str, key: str) -> Any:
+        try:
+            return self._data[section][key]
+        except KeyError:
+            logging.error("CONFIG_KEY_MISSING %s.%s", section, key)
+            raise RuntimeError(StatusCode.CONFIG_INVALID)
+
+    def _require(self, section: str) -> None:
+        if section not in self._data:
+            logging.error("CONFIG_SECTION_MISSING %s", section)
+            raise RuntimeError(StatusCode.CONFIG_INVALID)
 
     @staticmethod
-    def validate(cfg: AppConfig) -> None:
-        if not cfg.base_url or not cfg.base_url.startswith(("http://", "https://")):
-            raise ValueError("base_url invalid")
-
-        if cfg.timeout is not None and (not isinstance(cfg.timeout, int) or cfg.timeout <= 0):
-            raise ValueError("timeout invalid")
-
-        if cfg.proxy and cfg.proxy.url:
-            if not cfg.proxy.url.startswith(("http://", "https://")):
-                raise ValueError("proxy.url invalid")
-
-        if (cfg.db_type or "").strip().lower() == "mssql":
-            m = cfg.mssql
-            if not (m.server and m.database and m.username and m.password):
-                raise ValueError("mssql config missing required fields")
-
-    @staticmethod
-    def proxies_dict(cfg: AppConfig) -> Optional[Dict[str, str]]:
-        if not cfg.proxy or not cfg.proxy.url:
-            return None
-        return {"http": cfg.proxy.url, "https": cfg.proxy.url}
-
-    @staticmethod
-    def _from_dict(data: Dict[str, Any]) -> AppConfig:
-        proxy_in = data.get("proxy") or {}
-        mssql_in = data.get("mssql") or {}
-
-        cfg = AppConfig(
-            api_key=data.get("api_key"),
-            base_url=data.get("base_url") or "https://api.bitsighttech.com",
-            timeout=int(data.get("timeout") or 60),
-            proxy=ProxyConfig(
-                url=proxy_in.get("url"),
-                username=proxy_in.get("username"),
-                password=proxy_in.get("password"),
-            ),
-            db_type=data.get("db_type") or "mssql",
-            mssql=MSSQLConfig(
-                server=mssql_in.get("server"),
-                database=mssql_in.get("database"),
-                username=mssql_in.get("username"),
-                password=mssql_in.get("password"),
-                driver=mssql_in.get("driver") or "ODBC Driver 18 for SQL Server",
-                encrypt=bool(mssql_in.get("encrypt", True)),
-                trust_cert=bool(mssql_in.get("trust_cert", False)),
-                timeout=int(mssql_in.get("timeout") or 30),
-            ),
-        )
-        return cfg
+    def _require_key(obj: Dict[str, Any], key: str) -> None:
+        if key not in obj or obj[key] in (None, ""):
+            logging.error("CONFIG_VALUE_MISSING %s", key)
+            raise RuntimeError(StatusCode.CONFIG_INVALID)
