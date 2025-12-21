@@ -47,7 +47,7 @@ class ExitCode(IntEnum):
     # Execution completed using cached data only.
 
     SUCCESS_SKIPPED = 8
-    # Execution intentionally skipped by operator choice.
+    # Execution intentionally skipped by user choice.
 
     SUCCESS_OPERATOR_EXIT = 9
     # Operator requested clean termination.
