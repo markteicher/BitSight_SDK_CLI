@@ -144,6 +144,7 @@ Each `ingest` command maps to a BitSight API endpoint and writes results into it
 
 ### Ratings
 - `bitsight ingest current-ratings`
+- `bitsight ingest current-ratings-v2`
 - `bitsight ingest ratings-history --company-guid <guid> --since <date> [--backfill]`
 
 ### Findings & observations
@@ -152,7 +153,7 @@ Each `ingest` command maps to a BitSight API endpoint and writes results into it
 
 ### Threat intelligence / threats
 - `bitsight ingest threats`
-- `bitsight ingest threat-exposures`
+- bitsight ingest threat-exposures`
 
 ### Alerts
 - `bitsight ingest alerts --since <date>`
