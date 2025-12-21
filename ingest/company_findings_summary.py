@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 
 import logging
-import requests
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
 
 BITSIGHT_COMPANY_FINDINGS_SUMMARY_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/findings/summary"
@@ -11,36 +15,39 @@ BITSIGHT_COMPANY_FINDINGS_SUMMARY_ENDPOINT = (
 
 
 def fetch_company_findings_summary(
-    session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
-    timeout: int = 60,
-    proxies: Optional[dict] = None,
 ) -> Dict[str, Any]:
+    """
+    Fetch findings summary for a single company.
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
+    Endpoint:
+        GET /ratings/v1/companies/{company_guid}/findings/summary
 
-    url = f"{base_url}{BITSIGHT_COMPANY_FINDINGS_SUMMARY_ENDPOINT.format(company_guid=company_guid)}"
-    headers = {"Accept": "application/json"}
+    Returns a single record mapped 1:1 into dbo.bitsight_company_findings_summary.
+    """
+
     ingested_at = datetime.utcnow()
-
-    logging.info(
-        f"Fetching findings summary for company {company_guid}: {url}"
+    path = BITSIGHT_COMPANY_FINDINGS_SUMMARY_ENDPOINT.format(
+        company_guid=company_guid
     )
 
-    resp = session.get(
-        url,
-        headers=headers,
-        auth=(api_key, ""),
-        timeout=timeout,
-        proxies=proxies,
-    )
-    resp.raise_for_status()
+    logging.info("Fetching findings summary for company %s", company_guid)
+
+    try:
+        payload = ingest.request(path)
+
+    except TransportError:
+        raise
+
+    except Exception as exc:
+        raise TransportError(
+            str(exc),
+            StatusCode.INGESTION_FETCH_FAILED,
+        ) from exc
 
     return {
         "company_guid": company_guid,
         "ingested_at": ingested_at,
-        "raw_payload": resp.json(),
+        "raw_payload": payload,
     }
