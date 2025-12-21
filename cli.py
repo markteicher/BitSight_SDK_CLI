@@ -4,15 +4,14 @@ import argparse
 import importlib
 import logging
 import sys
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict
 
-# tqdm is optional at runtime via --no-progress
 from tqdm import tqdm  # noqa: F401
 
 
-# ----------------------------------------------------------------------
-# logging
-# ----------------------------------------------------------------------
+CLI_VERSION = "0.1.0"
+
+
 def setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -23,43 +22,23 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-# ----------------------------------------------------------------------
-# helpers
-# ----------------------------------------------------------------------
-def _progress_enabled(args: argparse.Namespace) -> bool:
-    return not getattr(args, "no_progress", False)
-
-
-def _build_proxies(args: argparse.Namespace) -> Optional[Dict[str, str]]:
-    proxy_url = getattr(args, "proxy_url", None)
-    if not proxy_url:
-        return None
-    return {"http": proxy_url, "https": proxy_url}
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        logging.error(message)
+        sys.exit(1)
 
 
 def _ingest_module_name(subcommand: str) -> str:
-    # map CLI command -> python module
-    # e.g., "current-ratings" -> "current_ratings"
     return subcommand.replace("-", "_")
 
 
 def _call_ingest_entrypoint(module, args: argparse.Namespace) -> None:
-    """
-    No stubs: we only call real functions/classes if they exist.
-    Supported patterns (first match wins):
-      - module.main(args)
-      - module.run(args)
-      - module.cli(args)
-      - module.<SomethingIngest>().run()
-    """
     for fn_name in ("main", "run", "cli"):
         fn = getattr(module, fn_name, None)
         if callable(fn):
-            logging.debug("Dispatching to %s.%s(args)", module.__name__, fn_name)
             fn(args)
             return
 
-    # try an *Ingest class
     ingest_cls = None
     for attr in dir(module):
         if attr.endswith("Ingest"):
@@ -72,46 +51,24 @@ def _call_ingest_entrypoint(module, args: argparse.Namespace) -> None:
         obj = ingest_cls()
         run = getattr(obj, "run", None)
         if callable(run):
-            logging.debug("Dispatching to %s.%s().run()", module.__name__, ingest_cls.__name__)
             run()
             return
 
-    # If we got here: module exists, but has no callable entrypoint
-    public_callables = [
-        name for name in dir(module)
-        if not name.startswith("_") and callable(getattr(module, name, None))
-    ]
     logging.error(
-        "Ingest module '%s' has no supported entrypoint. "
-        "Expected one of: main(args), run(args), cli(args), or *Ingest().run(). "
-        "Found callables: %s",
+        "Ingest module '%s' has no supported entrypoint "
+        "(main(args), run(args), cli(args), or *Ingest().run()).",
         module.__name__,
-        public_callables,
     )
     sys.exit(1)
 
 
-def _require(condition: bool, message: str) -> None:
-    if not condition:
-        logging.error(message)
-        sys.exit(1)
-
-
-# ----------------------------------------------------------------------
-# main
-# ----------------------------------------------------------------------
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bitsight", description="BitSight SDK + CLI")
 
-    # global flags
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    parser.add_argument(
-        "--no-progress",
-        action="store_true",
-        help="Disable progress bars (CI-safe)",
-    )
+    parser.add_argument("--no-progress", action="store_true", help="Disable progress bars")
+    parser.add_argument("--version", action="store_true", help="Print CLI version and exit")
 
-    # common connection flags (usable now, and by ingest modules that choose to read args)
     parser.add_argument("--api-key", help="BitSight API token (Basic Auth username)")
     parser.add_argument("--base-url", help="BitSight API base URL (e.g., https://api.bitsighttech.com)")
     parser.add_argument("--proxy-url", help="Proxy URL (e.g., http://proxy:8080)")
@@ -119,9 +76,12 @@ def main() -> None:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ------------------------------------------------------------------
+    # help / exit / quit
+    subparsers.add_parser("help", help="Show help and exit")
+    subparsers.add_parser("exit", help="Exit and print goodbye message")
+    subparsers.add_parser("quit", help="Exit and print goodbye message")
+
     # config
-    # ------------------------------------------------------------------
     config = subparsers.add_parser("config", help="Configuration management")
     config_sub = config.add_subparsers(dest="subcommand", required=True)
 
@@ -139,13 +99,11 @@ def main() -> None:
     config_set.add_argument("--proxy-password")
     config_set.add_argument("--timeout", type=int)
 
-    # ------------------------------------------------------------------
     # db
-    # ------------------------------------------------------------------
     db = subparsers.add_parser("db", help="Database management")
     db_sub = db.add_subparsers(dest="subcommand", required=True)
 
-    db_init = db_sub.add_parser("init")
+    db_init = db_sub.add_parser("init", help="Initialize database schema")
     db_init.add_argument("--mssql", action="store_true", help="Initialize MSSQL schema")
     db_init.add_argument("--server")
     db_init.add_argument("--database")
@@ -157,10 +115,10 @@ def main() -> None:
         help="Path to MSSQL schema file",
     )
 
-    db_sub.add_parser("status")
+    db_sub.add_parser("status", help="Show database status")
 
-    db_flush = db_sub.add_parser("flush")
-    db_flush.add_argument("--mssql", action="store_true", help="Flush data in MSSQL")
+    db_flush = db_sub.add_parser("flush", help="Flush data from database tables")
+    db_flush.add_argument("--mssql", action="store_true", help="Use MSSQL backend")
     db_flush.add_argument("--server")
     db_flush.add_argument("--database")
     db_flush.add_argument("--username")
@@ -168,9 +126,18 @@ def main() -> None:
     db_flush.add_argument("--table", help="Single dbo.<table> name (e.g., bitsight_users)")
     db_flush.add_argument("--all", action="store_true", help="Flush all BitSight tables")
 
-    # ------------------------------------------------------------------
+    db_clear = db_sub.add_parser("clear", help="Clear BitSight data from database")
+    db_clear.add_argument("--mssql", action="store_true", help="Use MSSQL backend")
+    db_clear.add_argument("--server")
+    db_clear.add_argument("--database")
+    db_clear.add_argument("--username")
+    db_clear.add_argument("--password")
+    db_clear.add_argument("--table", help="Clear a single dbo.<table>")
+    db_clear.add_argument("--all", action="store_true", help="Clear all BitSight tables")
+    db_clear.add_argument("--yes", action="store_true", help="Required confirmation flag")
+    db_clear.add_argument("--dry-run", action="store_true", help="Show actions without executing")
+
     # ingest
-    # ------------------------------------------------------------------
     ingest = subparsers.add_parser("ingest", help="Data ingestion")
     ingest_sub = ingest.add_subparsers(dest="subcommand", required=True)
 
@@ -179,7 +146,7 @@ def main() -> None:
         if extra_args:
             for arg in extra_args:
                 p.add_argument(*arg[0], **arg[1])
-        p.add_argument("--flush", action="store_true", help="Flush destination before ingest (module-defined)")
+        p.add_argument("--flush", action="store_true")
         return p
 
     ingest_cmd("users")
@@ -197,63 +164,81 @@ def main() -> None:
 
     ingest_cmd("current-ratings")
 
-    ingest_cmd("ratings-history", [
-        (["--company-guid"], {}),
-        (["--since"], {}),
-        (["--backfill"], {"action": "store_true"}),
-    ])
+    ingest_cmd(
+        "ratings-history",
+        [
+            (["--company-guid"], {}),
+            (["--since"], {}),
+            (["--backfill"], {"action": "store_true"}),
+        ],
+    )
 
-    ingest_cmd("findings", [
-        (["--company-guid"], {}),
-        (["--since"], {}),
-        (["--expand"], {}),
-    ])
+    ingest_cmd(
+        "findings",
+        [
+            (["--company-guid"], {}),
+            (["--since"], {}),
+            (["--expand"], {}),
+        ],
+    )
 
-    ingest_cmd("observations", [
-        (["--company-guid"], {}),
-        (["--since"], {}),
-    ])
+    ingest_cmd(
+        "observations",
+        [
+            (["--company-guid"], {}),
+            (["--since"], {}),
+        ],
+    )
 
     ingest_cmd("threats")
     ingest_cmd("threat-exposures")
-
     ingest_cmd("alerts", [(["--since"], {})])
-
     ingest_cmd("credential-leaks")
     ingest_cmd("exposed-credentials")
 
-    # ------------------------------------------------------------------
     # ingest-group
-    # ------------------------------------------------------------------
     ingest_group = subparsers.add_parser("ingest-group", help="Grouped ingestion")
     ingest_group_sub = ingest_group.add_subparsers(dest="subcommand", required=True)
     ingest_group_sub.add_parser("core")
     ingest_group_sub.add_parser("security")
     ingest_group_sub.add_parser("all")
 
-    # ------------------------------------------------------------------
     # status
-    # ------------------------------------------------------------------
     status = subparsers.add_parser("status", help="System status")
     status_sub = status.add_subparsers(dest="subcommand", required=True)
     status_sub.add_parser("tables")
     status_sub.add_parser("last-run")
     status_sub.add_parser("health")
 
-    # ------------------------------------------------------------------
-    # parse + runtime
-    # ------------------------------------------------------------------
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
-    setup_logging(args.verbose)
+
+    if getattr(args, "version", False):
+        print(CLI_VERSION)
+        sys.exit(0)
+
+    setup_logging(getattr(args, "verbose", False))
     logging.debug("CLI arguments: %s", vars(args))
 
-    # ------------------------------------------------------------------
-    # dispatch
-    # ------------------------------------------------------------------
+    if args.command == "help":
+        parser.print_help()
+        sys.exit(0)
+
+    if args.command in ("exit", "quit"):
+        print("Thank you for using the BitSight CLI")
+        sys.exit(0)
+
     if args.command == "db":
         if args.subcommand == "init":
-            _require(args.mssql, "db init currently requires --mssql")
-            _require(args.server and args.database and args.username and args.password, "db init --mssql requires --server/--database/--username/--password")
+            _require(args.mssql, "db init currently supports MSSQL only (--mssql)")
+            _require(
+                args.server and args.database and args.username and args.password,
+                "db init --mssql requires --server/--database/--username/--password",
+            )
 
             from db.init import MSSQLInitializer
 
@@ -267,10 +252,16 @@ def main() -> None:
             init.run()
             return
 
-        if args.subcommand == "flush":
-            _require(args.mssql, "db flush currently requires --mssql")
-            _require(args.server and args.database and args.username and args.password, "db flush --mssql requires --server/--database/--username/--password")
-            _require(args.all or args.table, "db flush requires either --all or --table")
+        if args.subcommand in ("flush", "clear"):
+            _require(getattr(args, "mssql", False), f"db {args.subcommand} currently supports MSSQL only (--mssql)")
+            _require(
+                args.server and args.database and args.username and args.password,
+                f"db {args.subcommand} --mssql requires --server/--database/--username/--password",
+            )
+            _require(args.all or args.table, f"db {args.subcommand} requires either --all or --table")
+
+            if args.subcommand == "clear":
+                _require(args.yes or args.dry_run, "db clear requires --yes or --dry-run")
 
             from db.mssql import MSSQLDatabase
 
@@ -280,70 +271,57 @@ def main() -> None:
                 username=args.username,
                 password=args.password,
             )
+
             try:
+                action = "Flushing" if args.subcommand == "flush" else "Clearing"
+
                 if args.table:
                     table = args.table.strip()
                     _require(dbh.table_exists(table), f"Table does not exist: dbo.{table}")
-                    logging.info("Flushing table dbo.%s", table)
-                    dbh.execute(f"DELETE FROM dbo.{table}")
-                    dbh.commit()
-                    logging.info("Flush complete: dbo.%s", table)
+
+                    if getattr(args, "dry_run", False):
+                        logging.info("DRY-RUN: would %s dbo.%s", action.lower(), table)
+                    else:
+                        logging.info("%s dbo.%s", action, table)
+                        dbh.execute(f"DELETE FROM dbo.{table}")
+                        dbh.commit()
+                        logging.info("%s complete: dbo.%s", action, table)
+
                 else:
-                    # Explicit BitSight tables flush list belongs in schema + ingest taxonomy;
-                    # we only flush what exists to stay deterministic across versions.
-                    tables = [
-                        "bitsight_collection_state",
-                        "bitsight_users",
-                        "bitsight_user_details",
-                        "bitsight_user_quota",
-                        "bitsight_user_company_views",
-                        "bitsight_companies",
-                        "bitsight_company_details",
-                        "bitsight_portfolio",
-                        "bitsight_current_ratings",
-                        "bitsight_ratings_history",
-                        "bitsight_findings",
-                        "bitsight_findings_statistics",
-                        "bitsight_observations",
-                        "bitsight_threats",
-                        "bitsight_alerts",
-                        "bitsight_exposed_credentials",
-                        "bitsight_news",
-                        "bitsight_insights",
-                        "bitsight_subsidiaries",
-                        "bitsight_subsidiary_statistics",
-                        "bitsight_nist_csf_reports",
-                        "bitsight_reports",
-                        "bitsight_statistics",
-                        "bitsight_industries",
-                        "bitsight_tiers",
-                        "bitsight_lifecycle_states",
-                    ]
-                    existing = [t for t in tables if dbh.table_exists(t)]
-                    _require(len(existing) > 0, "No known BitSight tables found to flush")
-                    for t in existing:
-                        logging.info("Flushing table dbo.%s", t)
-                        dbh.execute(f"DELETE FROM dbo.{t}")
-                    dbh.commit()
-                    logging.info("Flush complete: %d tables", len(existing))
+                    tables = dbh.list_bitsight_tables()
+                    _require(len(tables) > 0, "No BitSight tables found")
+
+                    for t in tables:
+                        if getattr(args, "dry_run", False):
+                            logging.info("DRY-RUN: would %s dbo.%s", action.lower(), t)
+                        else:
+                            logging.info("%s dbo.%s", action, t)
+                            dbh.execute(f"DELETE FROM dbo.{t}")
+
+                    if not getattr(args, "dry_run", False):
+                        dbh.commit()
+                        logging.info("%s complete: %d tables", action, len(tables))
+
             except Exception:
                 dbh.rollback()
-                logging.exception("Flush failed — rolled back")
-                raise
+                logging.exception("db %s failed — rolled back", args.subcommand)
+                sys.exit(1)
             finally:
                 dbh.close()
+
             return
 
         if args.subcommand == "status":
-            logging.info("db status: not implemented in this CLI file (use ingest/state tables when available)")
-            return
+            logging.error("db status is not wired yet")
+            sys.exit(1)
 
-        logging.error("Unhandled db command: %s", args.subcommand)
+        logging.error("Unhandled db subcommand: %s", args.subcommand)
         sys.exit(1)
 
     if args.command == "ingest":
         module_name = _ingest_module_name(args.subcommand)
         full_module = f"ingest.{module_name}"
+
         try:
             module = importlib.import_module(full_module)
         except ModuleNotFoundError:
@@ -354,16 +332,15 @@ def main() -> None:
         return
 
     if args.command == "ingest-group":
-        logging.info("Running ingest group: %s", args.subcommand)
-        logging.error("ingest-group wiring must be explicit (no implicit stubs).")
+        logging.error("ingest-group is not wired yet")
         sys.exit(1)
 
     if args.command == "config":
-        logging.error("config command wiring is not implemented in this cli.py yet.")
+        logging.error("config is not wired yet")
         sys.exit(1)
 
     if args.command == "status":
-        logging.error("status command wiring is not implemented in this cli.py yet.")
+        logging.error("status is not wired yet")
         sys.exit(1)
 
     logging.error("Unhandled command: %s", args.command)
