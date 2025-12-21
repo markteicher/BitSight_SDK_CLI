@@ -1,69 +1,60 @@
 #!/usr/bin/env python3
 
 import logging
-import requests
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
-# BitSight Company Overview Report endpoint
-BITSIGHT_COMPANY_OVERVIEW_REPORT_ENDPOINT = (
-    "/ratings/v1/reports/company-overview"
-)
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
+
+BITSIGHT_COMPANY_OVERVIEW_REPORT_ENDPOINT = "/ratings/v1/reports/company-overview"
 
 
 def request_company_overview_report(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
     report_format: str = "pdf",
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Request a Company Overview Report.
-    This is a POST endpoint that returns a report job descriptor.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+
+    Endpoint:
+        POST /ratings/v1/reports/company-overview
+
+    Returns a single record mapped 1:1 into dbo.bitsight_company_overview_report_jobs.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_OVERVIEW_REPORT_ENDPOINT}"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
+    requested_at = datetime.utcnow()
+    path = BITSIGHT_COMPANY_OVERVIEW_REPORT_ENDPOINT
 
     payload = {
         "company_guid": company_guid,
         "format": report_format,
     }
 
-    requested_at = datetime.utcnow()
-
     logging.info(
-        f"Requesting Company Overview Report "
-        f"(company_guid={company_guid}, format={report_format})"
+        "Requesting Company Overview Report (company_guid=%s, format=%s)",
+        company_guid,
+        report_format,
     )
 
-    resp = session.post(
-        url,
-        headers=headers,
-        auth=(api_key, ""),
-        json=payload,
-        timeout=timeout,
-        proxies=proxies,
-    )
-    resp.raise_for_status()
+    try:
+        response_payload = ingest.post(path, json_body=payload)
 
-    response_payload = resp.json()
+    except TransportError:
+        raise
 
-    record = {
+    except Exception as exc:
+        raise TransportError(
+            str(exc),
+            StatusCode.INGESTION_FETCH_FAILED,
+        ) from exc
+
+    return {
         "company_guid": company_guid,
         "report_format": report_format,
         "requested_at": requested_at,
         "raw_payload": response_payload,
     }
-
-    return record
