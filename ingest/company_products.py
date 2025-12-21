@@ -2,9 +2,13 @@
 
 import json
 import logging
-import requests
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
 
 BITSIGHT_COMPANY_PRODUCTS_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/products"
@@ -12,47 +16,43 @@ BITSIGHT_COMPANY_PRODUCTS_ENDPOINT = (
 
 
 def fetch_company_products(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch products used by a company.
 
     Endpoint:
-        /ratings/v1/companies/{company_guid}/products
+        GET /ratings/v1/companies/{company_guid}/products
 
-    Response:
-        Top-level JSON array of product dependency objects.
+    Returns:
+        List of records mapped 1:1 into dbo.bitsight_company_products.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_PRODUCTS_ENDPOINT.format(company_guid=company_guid)}"
-    headers = {"Accept": "application/json"}
-
     ingested_at = datetime.utcnow()
+    path = BITSIGHT_COMPANY_PRODUCTS_ENDPOINT.format(
+        company_guid=company_guid
+    )
 
     logging.info(
-        f"Fetching products for company {company_guid}: {url}"
+        "Fetching products for company %s",
+        company_guid,
     )
 
-    resp = session.get(
-        url,
-        headers=headers,
-        auth=(api_key, ""),
-        timeout=timeout,
-        proxies=proxies,
-    )
-    resp.raise_for_status()
+    try:
+        payload = ingest.request(path)
 
-    payload = resp.json()  # list[dict]
+    except TransportError:
+        raise
+
+    except Exception as exc:
+        raise TransportError(
+            str(exc),
+            StatusCode.INGESTION_FETCH_FAILED,
+        ) from exc
 
     records: List[Dict[str, Any]] = []
+
     for obj in payload:
         records.append(
             {
@@ -78,6 +78,9 @@ def fetch_company_products(
         )
 
     logging.info(
-        f"Total company products fetched for company {company_guid}: {len(records)}"
+        "Total company products fetched for company %s: %d",
+        company_guid,
+        len(records),
     )
+
     return records
