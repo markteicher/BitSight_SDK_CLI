@@ -2,132 +2,130 @@
 
 import logging
 from datetime import datetime
-from typing import List
+from typing import List, Optional
+
+from tqdm import tqdm
 
 from core.status_codes import StatusCode
 
 
 class IngestionExecution:
-    """
-    Records the factual execution of a single ingestion run.
+    __slots__ = (
+        "source",
+        "started_at",
+        "completed_at",
+        "completed",
+        "interrupted",
+        "exception_raised",
+        "status_events",
+        "records_discovered",
+        "records_written",
+        "records_skipped",
+        "records_failed",
+        "_progress",
+    )
 
-    DESIGN GUARANTEES
-    -----------------
-    - This class NEVER:
-        * exits the program
-        * logs success/failure conclusions
-        * formats output
-        * swallows exceptions
-    - This class ONLY:
-        * records timestamps
-        * records counters
-        * records ordered execution events
-    """
+    def __init__(self, source: str, total: Optional[int] = None, disable_progress: bool = False):
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("source must be a non-empty string")
 
-    # -------------------------------------------------
-    # construction
-    # -------------------------------------------------
-    def __init__(self, source: str):
-        if not source:
-            raise ValueError("source must be provided")
+        self.source = source.strip()
 
-        self.source = source
+        self.started_at = datetime.utcnow()
+        self.completed_at = None
 
-        # lifecycle timestamps
-        self.started_at: datetime = datetime.utcnow()
-        self.completed_at: datetime | None = None
+        self.completed = False
+        self.interrupted = False
+        self.exception_raised = False
 
-        # execution state flags (explicit, not inferred)
-        self.started: bool = True
-        self.completed: bool = False
-        self.interrupted: bool = False
-        self.exception_raised: bool = False
-
-        # ordered execution events
         self.status_events: List[StatusCode] = []
 
-        # counters (never negative, monotonic)
-        self.records_discovered: int = 0
-        self.records_written: int = 0
-        self.records_skipped: int = 0
-        self.records_failed: int = 0
+        self.records_discovered = 0
+        self.records_written = 0
+        self.records_skipped = 0
+        self.records_failed = 0
 
-        # initial events
-        self._record(StatusCode.EXECUTION_STARTED)
-        self._record(StatusCode.INGESTION_STARTED)
+        self._progress = tqdm(
+            total=total,
+            desc=f"ingest:{self.source}",
+            unit="records",
+            disable=disable_progress,
+            leave=True,
+        )
+
+        self._event(StatusCode.EXECUTION_STARTED)
+        self._event(StatusCode.INGESTION_STARTED)
 
     # -------------------------------------------------
-    # internal invariants
+    # internal enforcement
     # -------------------------------------------------
-    def _assert_active(self) -> None:
+    def _require_active(self) -> None:
         if self.completed:
-            raise RuntimeError("IngestionExecution already completed")
+            raise RuntimeError(f"ingestion '{self.source}' already completed")
 
-    def _record(self, event: StatusCode) -> None:
-        logging.debug("INGEST_EVENT [%s]: %s", self.source, event.value)
-        self.status_events.append(event)
+    def _event(self, code: StatusCode) -> None:
+        if not isinstance(code, StatusCode):
+            raise TypeError("status event must be StatusCode")
+        logging.debug("INGEST [%s] %s", self.source, code.value)
+        self.status_events.append(code)
 
     # -------------------------------------------------
-    # record-level accounting
+    # record accounting
     # -------------------------------------------------
     def record_discovered(self) -> None:
-        self._assert_active()
+        self._require_active()
         self.records_discovered += 1
-        self._record(StatusCode.RECORD_DISCOVERED)
+        self._progress.update(1)
+        self._event(StatusCode.RECORD_DISCOVERED)
 
     def record_written(self) -> None:
-        self._assert_active()
+        self._require_active()
         self.records_written += 1
-        self._record(StatusCode.DB_WRITE_SUCCEEDED)
+        self._event(StatusCode.DB_WRITE_SUCCEEDED)
 
     def record_skipped(self) -> None:
-        self._assert_active()
+        self._require_active()
         self.records_skipped += 1
-        self._record(StatusCode.RECORD_SKIPPED)
+        self._event(StatusCode.RECORD_SKIPPED)
 
     def record_failed(self) -> None:
-        self._assert_active()
+        self._require_active()
         self.records_failed += 1
-        self._record(StatusCode.DB_WRITE_FAILED)
+        self._event(StatusCode.DB_WRITE_FAILED)
 
     # -------------------------------------------------
-    # lifecycle transitions
+    # terminal transitions
     # -------------------------------------------------
     def mark_completed(self) -> None:
-        """
-        Normal termination.
-        """
-        self._assert_active()
+        self._require_active()
 
-        self.completed_at = datetime.utcnow()
         self.completed = True
+        self.completed_at = datetime.utcnow()
 
-        self._record(StatusCode.INGESTION_COMPLETED)
-        self._record(StatusCode.EXECUTION_COMPLETED)
+        self._progress.close()
+
+        self._event(StatusCode.INGESTION_COMPLETED)
+        self._event(StatusCode.EXECUTION_COMPLETED)
 
     def mark_interrupted(self) -> None:
-        """
-        External interruption (SIGINT, operator stop, etc).
-        """
-        self._assert_active()
+        self._require_active()
 
-        self.completed_at = datetime.utcnow()
         self.completed = True
         self.interrupted = True
+        self.completed_at = datetime.utcnow()
 
-        self._record(StatusCode.EXECUTION_INTERRUPTED)
+        self._progress.close()
+
+        self._event(StatusCode.EXECUTION_INTERRUPTED)
 
     def mark_exception(self) -> None:
-        """
-        Exception occurred upstream. This method DOES NOT swallow it.
-        Caller MUST still raise.
-        """
         if self.completed:
-            # do not double-record
-            return
+            raise RuntimeError(f"exception already recorded for '{self.source}'")
 
-        self.completed_at = datetime.utcnow()
         self.completed = True
         self.exception_raised = True
+        self.completed_at = datetime.utcnow()
 
-        self._record(StatusCode.EXECUTION_EXCEPTION_RAISED)
+        self._progress.close()
+
+        self._event(StatusCode.EXECUTION_EXCEPTION_RAISED)
