@@ -1,43 +1,67 @@
 #!/usr/bin/env python3
 
 import logging
-import requests
 from typing import Iterator, Dict, Any, Optional
-from urllib.parse import urlparse
+
+import requests
+from requests import Session
 
 from core.status_codes import StatusCode
 from core.transport import TransportError
 
 
 class BitSightIngestBase:
+    """
+    Base helper for BitSight ingestion modules.
+
+    Responsibilities:
+    - Own a requests.Session
+    - Execute authenticated GET requests
+    - Provide deterministic pagination via links.next
+    """
+
     def __init__(
         self,
-        api_key: str,
+        *,
+        session: Optional[Session],
         base_url: str,
-        proxies: Optional[Dict[str, str]] = None,
+        api_key: str,
         timeout: int = 60,
+        proxies: Optional[Dict[str, str]] = None,
+        verify_ssl: bool = True,
     ):
-        if not api_key or not isinstance(api_key, str):
-            raise ValueError("api_key must be a non-empty string")
-
         if not base_url or not isinstance(base_url, str):
-            raise ValueError("base_url must be a non-empty string")
+            raise TransportError(
+                "Invalid base_url",
+                StatusCode.CONFIG_INVALID,
+            )
 
-        self.api_key = api_key
+        if not api_key or not isinstance(api_key, str):
+            raise TransportError(
+                "API key missing",
+                StatusCode.AUTH_API_KEY_MISSING,
+            )
+
         self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
         self.timeout = timeout
         self.proxies = proxies
+        self.verify_ssl = verify_ssl
 
-        self.session = requests.Session()
-        self.session.headers.update({
-            "Accept": "application/json",
-        })
+        self.session = session or requests.Session()
 
+    # ---------------------------------------------------------
+    # HTTP
+    # ---------------------------------------------------------
     def request(
         self,
         path: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """
+        Execute a single GET request against the BitSight API.
+        """
+
         url = f"{self.base_url}{path}"
         logging.debug("Requesting %s", url)
 
@@ -48,59 +72,81 @@ class BitSightIngestBase:
                 auth=(self.api_key, ""),
                 timeout=self.timeout,
                 proxies=self.proxies,
+                verify=self.verify_ssl,
+                headers={"Accept": "application/json"},
             )
-            resp.raise_for_status()
-            return resp.json()
 
         except requests.exceptions.Timeout as e:
             raise TransportError(str(e), StatusCode.TRANSPORT_TIMEOUT) from e
 
+        except requests.exceptions.ProxyError as e:
+            raise TransportError(str(e), StatusCode.TRANSPORT_PROXY_ERROR) from e
+
+        except requests.exceptions.SSLError as e:
+            raise TransportError(str(e), StatusCode.TRANSPORT_SSL_ERROR) from e
+
         except requests.exceptions.ConnectionError as e:
             raise TransportError(str(e), StatusCode.TRANSPORT_CONNECTION_FAILED) from e
 
-        except requests.exceptions.HTTPError as e:
-            http_status = e.response.status_code if e.response else None
+        except Exception as e:
+            raise TransportError(str(e), StatusCode.TRANSPORT_UNKNOWN) from e
 
-            if http_status == 401:
-                raise TransportError("Unauthorized", StatusCode.API_UNAUTHORIZED, http_status)
-            if http_status == 403:
-                raise TransportError("Forbidden", StatusCode.API_FORBIDDEN, http_status)
-            if http_status == 404:
-                raise TransportError("Not found", StatusCode.API_NOT_FOUND, http_status)
-            if http_status == 429:
-                raise TransportError("Rate limited", StatusCode.API_RATE_LIMITED, http_status)
-            if 500 <= (http_status or 0) <= 599:
-                raise TransportError("Server error", StatusCode.API_SERVER_ERROR, http_status)
+        if resp.status_code == 200:
+            return resp.json()
 
-            raise TransportError(
-                "HTTP error",
-                StatusCode.API_UNEXPECTED_RESPONSE,
-                http_status,
-            ) from e
+        if resp.status_code == 401:
+            raise TransportError("Unauthorized", StatusCode.API_UNAUTHORIZED, resp.status_code)
 
+        if resp.status_code == 403:
+            raise TransportError("Forbidden", StatusCode.API_FORBIDDEN, resp.status_code)
+
+        if resp.status_code == 404:
+            raise TransportError("Not found", StatusCode.API_NOT_FOUND, resp.status_code)
+
+        if resp.status_code == 429:
+            raise TransportError("Rate limited", StatusCode.API_RATE_LIMITED, resp.status_code)
+
+        if 500 <= resp.status_code <= 599:
+            raise TransportError("Server error", StatusCode.API_SERVER_ERROR, resp.status_code)
+
+        raise TransportError(
+            f"Unexpected HTTP status {resp.status_code}",
+            StatusCode.API_UNEXPECTED_RESPONSE,
+            resp.status_code,
+        )
+
+    # ---------------------------------------------------------
+    # Pagination
+    # ---------------------------------------------------------
     def paginate(
         self,
         path: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> Iterator[Dict[str, Any]]:
-        params = params or {}
+        """
+        Iterate deterministically through a paginated BitSight endpoint.
+        """
+
+        current_path = path
+        current_params = params or {}
 
         while True:
-            data = self.request(path, params=params)
+            payload = self.request(current_path, params=current_params)
 
-            results = data.get("results", [])
+            results = payload.get("results", [])
             for item in results:
                 yield item
 
-            links = data.get("links") or {}
+            links = payload.get("links") or {}
             next_link = links.get("next")
-            if not next_link:
-                break
 
-            parsed = urlparse(next_link)
-            path = parsed.path
-            params = dict(
-                (kv.split("=", 1) if "=" in kv else (kv, None))
-                for kv in parsed.query.split("&")
-                if kv
-            )
+            if not next_link:
+                return
+
+            # BitSight pagination encodes offset/limit in the next URL
+            if next_link.startswith(self.base_url):
+                current_path = next_link[len(self.base_url):]
+                current_params = None
+            else:
+                current_path = next_link
+                current_params = None
