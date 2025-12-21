@@ -174,7 +174,10 @@ def main() -> None:
     ingest_cmd("portfolio-contacts")
     ingest_cmd("portfolio-public-disclosures")
 
-    ingest_cmd("current-ratings")
+    # ratings (EXPLICIT VERSIONING)
+    ingest_cmd("current-ratings")       # v1 → ingest/current_ratings.py
+    ingest_cmd("current-ratings-v2")    # v2 → ingest/current_ratings_v2.py
+
     ingest_cmd("ratings-history", [
         (["--company-guid"], {}),
         (["--since"], {}),
@@ -220,7 +223,6 @@ def main() -> None:
     args = parser.parse_args()
     setup_logging(args.verbose)
 
-    # shorthand exit aliases
     if args.command in ("exit", "quit", "x", "q"):
         exit_cli()
 
