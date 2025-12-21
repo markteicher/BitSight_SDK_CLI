@@ -192,39 +192,38 @@ BitSight_SDK_CLI/
 │   ├── init.py
 │   ├── mssql.py
 │   └── schema/
-│       └── mssql.sql
+│       └── mssql.sql 
 ├── ingest/
-├── alerts.py
-├── asset_risk_matrix.py
-├── asset_summaries.py
-├── assets.py
-├── base.py
-├── client_access_links.py
-├── companies.py
-├── company_details.py
-├── company_findings_summary.py
-├── company_infrastructure.py
-├── company_overview_report.py
-├── company_products.py
-├── company_products_post.py
-├── company_relationships.py
-├── company_requests.py
-├── current_ratings.py
-├── current_ratings_v2.py
-├── findings.py
-├── findings_statistics.py
-├── observations.py
-├── portfolio.py
-├── ratings_history.py
-├── threats.py
-├── threat_statistics.py
-├── threats_impact.py
-├── threats_evidence.py
-├── user_company_views.py
-├── user_details.py
-├── users.py
-├── users_quota.py
-
+│   ├── alerts.py
+│   ├── asset_risk_matrix.py
+│   ├── asset_summaries.py
+│   ├── assets.py
+│   ├── base.py
+│   ├── client_access_links.py
+│   ├── companies.py
+│   ├── company_details.py
+│   ├── company_findings_summary.py
+│   ├── company_infrastructure.py
+│   ├── company_overview_report.py
+│   ├── company_products.py
+│   ├── company_products_post.py
+│   ├── company_relationships.py
+│   ├── company_requests.py
+│   ├── current_ratings.py
+│   ├── current_ratings_v2.py
+│   ├── findings.py
+│   ├── findings_statistics.py
+│   ├── observations.py
+│   ├── portfolio.py
+│   ├── ratings_history.py
+│   ├── threats.py
+│   ├── threat_statistics.py
+│   ├── threats_impact.py
+│   ├── threats_evidence.py
+│   ├── user_company_views.py
+│   ├── user_details.py
+│   ├── users.py
+│   └── users_quota.py
 
 ```
 
