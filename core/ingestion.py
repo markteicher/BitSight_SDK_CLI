@@ -1,131 +1,134 @@
 #!/usr/bin/env python3
 
 import logging
+import time
 from datetime import datetime
-from typing import List, Optional
-
-from tqdm import tqdm
+from typing import Iterable, Dict, Any, Optional
 
 from core.status_codes import StatusCode
+from core.exit_codes import ExitCode
 
 
 class IngestionExecution:
-    __slots__ = (
-        "source",
-        "started_at",
-        "completed_at",
-        "completed",
-        "interrupted",
-        "exception_raised",
-        "status_events",
-        "records_discovered",
-        "records_written",
-        "records_skipped",
-        "records_failed",
-        "_progress",
-    )
+    """
+    Execution wrapper for a single ingestion operation.
 
-    def __init__(self, source: str, total: Optional[int] = None, disable_progress: bool = False):
-        if not isinstance(source, str) or not source.strip():
-            raise ValueError("source must be a non-empty string")
+    Responsibilities:
+    - Track execution start and end time
+    - Track record counts (retrieved, processed, written)
+    - Track execution status and error conditions
+    - Provide a single execution result for CLI and automation layers
 
-        self.source = source.strip()
+    This class does not:
+    - Fetch data from APIs
+    - Transform payloads
+    - Write directly to databases
+    """
 
+    def __init__(self, name: str):
+        """
+        Initialize execution state for one ingestion run.
+
+        :param name: Logical name of the ingestion operation
+        """
+        self.name = name
         self.started_at = datetime.utcnow()
-        self.completed_at = None
+        self.finished_at: Optional[datetime] = None
 
-        self.completed = False
-        self.interrupted = False
-        self.exception_raised = False
-
-        self.status_events: List[StatusCode] = []
-
-        self.records_discovered = 0
+        self.records_retrieved = 0
+        self.records_processed = 0
         self.records_written = 0
-        self.records_skipped = 0
-        self.records_failed = 0
+        self.errors = 0
 
-        self._progress = tqdm(
-            total=total,
-            desc=f"ingest:{self.source}",
-            unit="records",
-            disable=disable_progress,
-            leave=True,
-        )
+        self.status_code: Optional[StatusCode] = None
+        self.exit_code: Optional[ExitCode] = None
+        self.error_detail: Optional[str] = None
 
-        self._event(StatusCode.EXECUTION_STARTED)
-        self._event(StatusCode.INGESTION_STARTED)
+    def mark_retrieved(self, count: int) -> None:
+        """
+        Record how many records were retrieved from the source API.
+        """
+        self.records_retrieved += count
 
-    # -------------------------------------------------
-    # internal enforcement
-    # -------------------------------------------------
-    def _require_active(self) -> None:
-        if self.completed:
-            raise RuntimeError(f"ingestion '{self.source}' already completed")
+    def mark_processed(self, count: int) -> None:
+        """
+        Record how many records were processed after retrieval.
+        """
+        self.records_processed += count
 
-    def _event(self, code: StatusCode) -> None:
-        if not isinstance(code, StatusCode):
-            raise TypeError("status event must be StatusCode")
-        logging.debug("INGEST [%s] %s", self.source, code.value)
-        self.status_events.append(code)
+    def mark_written(self, count: int) -> None:
+        """
+        Record how many records were successfully written to the database.
+        """
+        self.records_written += count
 
-    # -------------------------------------------------
-    # record accounting
-    # -------------------------------------------------
-    def record_discovered(self) -> None:
-        self._require_active()
-        self.records_discovered += 1
-        self._progress.update(1)
-        self._event(StatusCode.RECORD_DISCOVERED)
+    def mark_error(self, status_code: StatusCode, detail: str) -> None:
+        """
+        Record an error condition for this execution.
 
-    def record_written(self) -> None:
-        self._require_active()
-        self.records_written += 1
-        self._event(StatusCode.DB_WRITE_SUCCEEDED)
+        This method:
+        - Increments the error counter
+        - Stores the last status code
+        - Stores a human-readable error detail
 
-    def record_skipped(self) -> None:
-        self._require_active()
-        self.records_skipped += 1
-        self._event(StatusCode.RECORD_SKIPPED)
+        It does not terminate execution.
+        """
+        self.errors += 1
+        self.status_code = status_code
+        self.error_detail = detail
 
-    def record_failed(self) -> None:
-        self._require_active()
-        self.records_failed += 1
-        self._event(StatusCode.DB_WRITE_FAILED)
+    def finalize_success(self) -> None:
+        """
+        Mark execution as successful.
 
-    # -------------------------------------------------
-    # terminal transitions
-    # -------------------------------------------------
-    def mark_completed(self) -> None:
-        self._require_active()
+        Sets:
+        - finished_at timestamp
+        - status_code to OK
+        - exit_code to SUCCESS
+        """
+        self.finished_at = datetime.utcnow()
+        self.status_code = StatusCode.OK
+        self.exit_code = ExitCode.SUCCESS
 
-        self.completed = True
-        self.completed_at = datetime.utcnow()
+    def finalize_failure(self, exit_code: ExitCode) -> None:
+        """
+        Mark execution as failed.
 
-        self._progress.close()
+        Sets:
+        - finished_at timestamp
+        - exit_code to the provided value
 
-        self._event(StatusCode.INGESTION_COMPLETED)
-        self._event(StatusCode.EXECUTION_COMPLETED)
+        status_code must already be set prior to calling this method.
+        """
+        self.finished_at = datetime.utcnow()
+        self.exit_code = exit_code
 
-    def mark_interrupted(self) -> None:
-        self._require_active()
+    def duration_seconds(self) -> float:
+        """
+        Return execution duration in seconds.
+        """
+        end_time = self.finished_at or datetime.utcnow()
+        return (end_time - self.started_at).total_seconds()
 
-        self.completed = True
-        self.interrupted = True
-        self.completed_at = datetime.utcnow()
+    def as_dict(self) -> Dict[str, Any]:
+        """
+        Return a structured execution summary.
 
-        self._progress.close()
-
-        self._event(StatusCode.EXECUTION_INTERRUPTED)
-
-    def mark_exception(self) -> None:
-        if self.completed:
-            raise RuntimeError(f"exception already recorded for '{self.source}'")
-
-        self.completed = True
-        self.exception_raised = True
-        self.completed_at = datetime.utcnow()
-
-        self._progress.close()
-
-        self._event(StatusCode.EXECUTION_EXCEPTION_RAISED)
+        This structure is suitable for:
+        - CLI output
+        - Logging
+        - Status reporting
+        """
+        return {
+            "name": self.name,
+            "started_at": self.started_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "duration_seconds": self.duration_seconds(),
+            "records_retrieved": self.records_retrieved,
+            "records_processed": self.records_processed,
+            "records_written": self.records_written,
+            "errors": self.errors,
+            "status_code": self.status_code.name if self.status_code else None,
+            "exit_code": self.exit_code.value if self.exit_code else None,
+            "error_detail": self.error_detail,
+        }
