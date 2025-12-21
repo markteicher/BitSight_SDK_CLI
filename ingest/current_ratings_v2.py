@@ -4,7 +4,7 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 
 # BitSight Current Ratings v2 endpoint
 BITSIGHT_CURRENT_RATINGS_V2_ENDPOINT = "/ratings/v2/current-ratings"
@@ -54,20 +54,26 @@ def fetch_current_ratings_v2(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append({
-                "company_guid": (obj.get("company") or {}).get("guid"),
-                "rating": obj.get("rating"),
-                "rating_date": obj.get("rating_date"),
-                "ingested_at": ingested_at,
-                "raw_payload": obj,
-            })
+            records.append(
+                {
+                    "company_guid": (obj.get("company") or {}).get("guid"),
+                    "rating": obj.get("rating"),
+                    "rating_date": obj.get("rating_date"),
+                    "ingested_at": ingested_at,
+                    "raw_payload": obj,
+                }
+            )
 
         links = payload.get("links") or {}
         next_link = links.get("next")
 
         if next_link:
             url = _absolutize_next(url, next_link)
-            offset += limit
+            next_offset = _extract_offset(url)
+            if next_offset is not None:
+                offset = next_offset
+            else:
+                offset += limit
             continue
 
         if len(results) < limit:
@@ -75,7 +81,7 @@ def fetch_current_ratings_v2(
 
         offset += limit
 
-    logging.info(f"Total current ratings fetched: {len(records)}")
+    logging.info(f"Total current ratings v2 fetched: {len(records)}")
     return records
 
 
@@ -83,3 +89,13 @@ def _absolutize_next(current_url: str, next_link: str) -> str:
     if next_link.startswith("http://") or next_link.startswith("https://"):
         return next_link
     return urljoin(current_url, next_link)
+
+
+def _extract_offset(url: str) -> Optional[int]:
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if "offset" in qs and qs["offset"]:
+            return int(qs["offset"][0])
+    except Exception:
+        return None
+    return None
