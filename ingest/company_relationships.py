@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 
 import logging
-import requests
 from datetime import datetime
-from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+from typing import Dict, Any, List
 
-# BitSight Company Relationship Details endpoint
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
+
 BITSIGHT_COMPANY_RELATIONSHIPS_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/relationships"
 )
 
 
 def fetch_company_relationships(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch relationship details for a single company.
@@ -26,19 +24,15 @@ def fetch_company_relationships(
     Endpoint:
         GET /ratings/v1/companies/{company_guid}/relationships
 
-    Full 1:1 physical mapping of results[] fields:
-        guid, company_guid, company_name, relationship_type,
-        creator, last_editor, created_time, last_edited_time
+    Full 1:1 physical mapping of results[] fields.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_RELATIONSHIPS_ENDPOINT.format(company_guid=company_guid)}"
-    headers = {"Accept": "application/json"}
+    ingested_at = datetime.utcnow()
+    path = BITSIGHT_COMPANY_RELATIONSHIPS_ENDPOINT.format(
+        company_guid=company_guid
+    )
 
     records: List[Dict[str, Any]] = []
-    ingested_at = datetime.utcnow()
 
     limit = 100
     offset = 0
@@ -47,21 +41,24 @@ def fetch_company_relationships(
         params = {"limit": limit, "offset": offset}
 
         logging.info(
-            f"Fetching company relationship details for {company_guid}: {url} "
-            f"(limit={limit}, offset={offset})"
+            "Fetching company relationship details for %s (limit=%d, offset=%d)",
+            company_guid,
+            limit,
+            offset,
         )
 
-        resp = session.get(
-            url,
-            headers=headers,
-            auth=(api_key, ""),
-            params=params,
-            timeout=timeout,
-            proxies=proxies,
-        )
-        resp.raise_for_status()
+        try:
+            payload = ingest.request(path, params=params)
 
-        payload = resp.json()
+        except TransportError:
+            raise
+
+        except Exception as exc:
+            raise TransportError(
+                str(exc),
+                StatusCode.INGESTION_FETCH_FAILED,
+            ) from exc
+
         results = payload.get("results", [])
 
         for obj in results:
@@ -83,21 +80,15 @@ def fetch_company_relationships(
         links = payload.get("links") or {}
         next_link = links.get("next")
 
-        if next_link:
-            url = _absolutize_next(url, next_link)
-            offset += limit
-            continue
-
-        if len(results) < limit:
+        if not next_link:
             break
 
         offset += limit
 
-    logging.info(f"Total company relationship records fetched: {len(records)}")
+    logging.info(
+        "Total company relationship records fetched for %s: %d",
+        company_guid,
+        len(records),
+    )
+
     return records
-
-
-def _absolutize_next(current_url: str, next_link: str) -> str:
-    if next_link.startswith("http://") or next_link.startswith("https://"):
-        return next_link
-    return urljoin(current_url, next_link)
