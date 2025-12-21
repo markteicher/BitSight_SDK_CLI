@@ -4,9 +4,15 @@ A Software Developer's Kit and Command Line Interpreter interface for  Bitsight 
 
 Bitsight, a leading cyber risk intelligence company, provides objective, data-driven security ratings and analytics to help organizations manage digital risks, particularly with third parties. Their platform continuously analyzes external data to score companies' security postures, identify vulnerabilities, and benchmark performance, helping businesses make informed decisions about vendors, cyber insurance, and overall security strategy.
 
+## What it does:
+Security Ratings: Assigns objective, data-backed scores (from 250-900) to organizations, reflecting their cybersecurity health.
 
+Third-Party Risk Management (TPRM): Assesses the risk introduced by vendors, clients, and partners, helping companies manage supply chain vulnerabilities.
 
+Attack Surface Management: Maps and monitors an organization's entire digital footprint to find exposures.
+Benchmarking: Allows companies to compare their security performance against peers and industry standards.
 
+Risk Quantification: Provides data to help understand the financial impact of cyber risk. 
 
 This application is built to export data via the extensive BitSight API for  writing it into **Microsoft SQL Server (MSSQL)** using a **1:1 physical table representation** of BitSight endpoints.
 
