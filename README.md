@@ -2,7 +2,11 @@
 
 A Software Developer's Kit and Command Line Interpreter interface for  Bitsight Security Ratings. 
 
-BitSight Security Ratings allows for monitoring security ratings, portfolio companies, alerts, findings, exposed credentials, users, and threat intelligence.
+Bitsight, a leading cyber risk intelligence company, provides objective, data-driven security ratings and analytics to help organizations manage digital risks, particularly with third parties. Their platform continuously analyzes external data to score companies' security postures, identify vulnerabilities, and benchmark performance, helping businesses make informed decisions about vendors, cyber insurance, and overall security strategy.
+
+
+
+
 
 This application is built to export data via the extensive BitSight API for  writing it into **Microsoft SQL Server (MSSQL)** using a **1:1 physical table representation** of BitSight endpoints.
 
