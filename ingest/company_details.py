@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 
 import logging
-import requests
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
 
 BITSIGHT_COMPANY_DETAILS_ENDPOINT = "/ratings/v1/companies/{company_guid}"
 
 
 def fetch_company_details(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Fetch full company details from BitSight.
@@ -26,25 +26,22 @@ def fetch_company_details(
     Returns a single record mapped 1:1 into dbo.bitsight_company_details.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_DETAILS_ENDPOINT.format(company_guid=company_guid)}"
-    headers = {"Accept": "application/json"}
     ingested_at = datetime.utcnow()
+    path = BITSIGHT_COMPANY_DETAILS_ENDPOINT.format(company_guid=company_guid)
 
-    logging.info(f"Fetching company details for {company_guid}: {url}")
+    logging.info("Fetching company details for %s", company_guid)
 
-    resp = session.get(
-        url,
-        headers=headers,
-        auth=(api_key, ""),
-        timeout=timeout,
-        proxies=proxies,
-    )
-    resp.raise_for_status()
+    try:
+        obj = ingest.request(path)
 
-    obj = resp.json()
+    except TransportError:
+        raise
+
+    except Exception as exc:
+        raise TransportError(
+            str(exc),
+            StatusCode.INGESTION_FETCH_FAILED,
+        ) from exc
 
     primary_company = obj.get("primary_company") or {}
 
