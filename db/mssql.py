@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import logging
+from typing import Iterable, Sequence, Any
+
 import pyodbc
-import json
-from typing import Iterable, Tuple, Any
+
+from core.database_interface import DatabaseInterface
 
 
-class MSSQLDatabase:
+class MSSQLDatabase(DatabaseInterface):
+    """
+    Concrete MSSQL implementation of DatabaseInterface.
+    """
+
     def __init__(
         self,
         server: str,
@@ -27,11 +35,12 @@ class MSSQLDatabase:
         self.trust_cert = trust_cert
         self.timeout = timeout
 
-        self.connection = self._connect()
+        self.connection: pyodbc.Connection = self._connect()
 
-    # ------------------------------------------------------------
-    # Connection
-    # ------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # connection
+    # ------------------------------------------------------------------
+
     def _connect(self) -> pyodbc.Connection:
         conn_str = (
             f"DRIVER={{{self.driver}}};"
@@ -49,71 +58,71 @@ class MSSQLDatabase:
             self.server,
             self.database,
         )
+
         return pyodbc.connect(conn_str, autocommit=False)
 
-    # ------------------------------------------------------------
-    # Utilities
-    # ------------------------------------------------------------
-    def _normalize_param(self, value: Any) -> Any:
-        """
-        Ensure payloads are safe for MSSQL insertion.
-        Dicts/lists are always stored as JSON strings.
-        """
-        if isinstance(value, (dict, list)):
-            return json.dumps(value, ensure_ascii=False)
-        return value
+    # ------------------------------------------------------------------
+    # interface implementation
+    # ------------------------------------------------------------------
 
-    def table_exists(self, table_name: str) -> bool:
-        """
-        Validate required schema exists before ingestion.
-        """
-        sql = """
-        SELECT 1
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = 'dbo'
-          AND TABLE_NAME = ?
-        """
-        with self.connection.cursor() as cursor:
-            cursor.execute(sql, (table_name,))
-            return cursor.fetchone() is not None
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
+        cursor = self.connection.cursor()
+        cursor.execute(sql, params)
 
-    # ------------------------------------------------------------
-    # Execution
-    # ------------------------------------------------------------
-    def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
-        normalized = tuple(self._normalize_param(p) for p in params)
-        with self.connection.cursor() as cursor:
-            cursor.execute(sql, normalized)
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
+        cursor = self.connection.cursor()
+        cursor.fast_executemany = True
+        cursor.executemany(sql, rows)
 
-    def executemany(self, sql: str, rows: Iterable[Tuple[Any, ...]]) -> None:
-        with self.connection.cursor() as cursor:
-            cursor.fast_executemany = True
-            normalized_rows = [
-                tuple(self._normalize_param(p) for p in row)
-                for row in rows
-            ]
-            cursor.executemany(sql, normalized_rows)
-
-    # ------------------------------------------------------------
-    # Transaction Control
-    # ------------------------------------------------------------
     def commit(self) -> None:
         self.connection.commit()
 
     def rollback(self) -> None:
         self.connection.rollback()
 
-    # ------------------------------------------------------------
-    # Shutdown
-    # ------------------------------------------------------------
     def close(self) -> None:
-        try:
-            self.connection.close()
-        except Exception:
-            pass
+        self.connection.close()
 
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
+    # ------------------------------------------------------------------
+    # health / validation
+    # ------------------------------------------------------------------
+
+    def ping(self) -> None:
+        """
+        Validate database connectivity.
+        Raises on failure.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT 1")
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("MSSQL ping failed")
+
+    def scalar(self, sql: str, params: Sequence[Any] = ()) -> Any:
+        """
+        Execute a query expected to return exactly one scalar value.
+        Raises if no row is returned.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+
+        if row is None:
+            raise RuntimeError("scalar query returned no rows")
+
+        return row[0]
+
+    def table_exists(self, schema: str, table: str) -> bool:
+        """
+        Check whether a table exists in the database.
+        """
+        sql = """
+        SELECT 1
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = ?
+          AND TABLE_NAME = ?
+        """
+
+        cursor = self.connection.cursor()
+        cursor.execute(sql, (schema, table))
+        return cursor.fetchone() is not None
