@@ -103,7 +103,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     # ------------------------------------------------------------------
-    # exit / quit (explicit)
+    # exit / quit
     # ------------------------------------------------------------------
     subparsers.add_parser("exit")
     subparsers.add_parser("quit")
@@ -145,7 +145,6 @@ def main() -> None:
     db_flush.add_argument("--table")
     db_flush.add_argument("--all", action="store_true")
 
-    # db clear (MSSQL only) - clears records
     db_clear = db_sub.add_parser("clear")
     _add_db_connection_args(db_clear)
     db_clear.add_argument("--table")
@@ -165,100 +164,4 @@ def main() -> None:
             for argspec in extra:
                 p.add_argument(*argspec[0], **argspec[1])
         p.add_argument("--flush", action="store_true")
-        return p
-
-    ingest_cmd("users")
-    ingest_cmd("user-details", [(["--user-guid"], {})])
-    ingest_cmd("user-quota")
-    ingest_cmd("user-company-views")
-
-    ingest_cmd("companies")
-    ingest_cmd("company-details", [(["--company-guid"], {})])
-
-    ingest_cmd("portfolio")
-    ingest_cmd("portfolio-details", [(["--company-guid"], {})])
-    ingest_cmd("portfolio-contacts")
-    ingest_cmd("portfolio-public-disclosures")
-
-    # current ratings v1 + v2
-    ingest_cmd("current-ratings")
-    ingest_cmd("current-ratings-v2")
-
-    ingest_cmd("ratings-history", [
-        (["--company-guid"], {}),
-        (["--since"], {}),
-        (["--backfill"], {"action": "store_true"}),
-    ])
-
-    ingest_cmd("findings", [
-        (["--company-guid"], {}),
-        (["--since"], {}),
-        (["--expand"], {}),
-    ])
-
-    ingest_cmd("observations", [
-        (["--company-guid"], {}),
-        (["--since"], {}),
-    ])
-
-    ingest_cmd("threats")
-    ingest_cmd("threat-exposures")
-
-    ingest_cmd("alerts", [(["--since"], {})])
-    ingest_cmd("credential-leaks")
-    ingest_cmd("exposed-credentials")
-
-    # ------------------------------------------------------------------
-    # ingest-group
-    # ------------------------------------------------------------------
-    ingest_group = subparsers.add_parser("ingest-group")
-    ingest_group_sub = ingest_group.add_subparsers(dest="subcommand", required=True)
-
-    ingest_group_sub.add_parser("core")
-    ingest_group_sub.add_parser("security")
-    ingest_group_sub.add_parser("all")
-
-    # ------------------------------------------------------------------
-    # help alias
-    # ------------------------------------------------------------------
-    subparsers.add_parser("help")
-
-    # ------------------------------------------------------------------
-    # parse
-    # ------------------------------------------------------------------
-    args = parser.parse_args()
-    setup_logging(args.verbose)
-
-    # shorthand exit aliases
-    if args.command in ("exit", "quit", "x", "q"):
-        exit_cli()
-
-    if args.command in (None, "help"):
-        parser.print_help()
         return
-
-    # ------------------------------------------------------------------
-    # dispatch
-    # ------------------------------------------------------------------
-    if args.command == "ingest":
-        dispatch_ingest(args.subcommand, args)
-        return
-
-    if args.command == "db":
-        logging.info("db command selected: %s", args.subcommand)
-        return
-
-    if args.command == "config":
-        logging.info("config command selected: %s", args.subcommand)
-        return
-
-    if args.command == "ingest-group":
-        logging.info("ingest-group selected: %s", args.subcommand)
-        return
-
-    logging.error("Unhandled command")
-    sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
