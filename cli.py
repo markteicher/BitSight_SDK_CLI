@@ -74,6 +74,14 @@ def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
     sys.exit(1)
 
 
+def _add_db_connection_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--mssql", action="store_true")
+    p.add_argument("--server")
+    p.add_argument("--database")
+    p.add_argument("--username")
+    p.add_argument("--password")
+
+
 # ----------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------
@@ -129,21 +137,19 @@ def main() -> None:
     db_sub = db.add_subparsers(dest="subcommand", required=True)
 
     db_init = db_sub.add_parser("init")
-    db_init.add_argument("--mssql", action="store_true")
-    db_init.add_argument("--server")
-    db_init.add_argument("--database")
-    db_init.add_argument("--username")
-    db_init.add_argument("--password")
+    _add_db_connection_args(db_init)
     db_init.add_argument("--schema-path", default="db/schema/mssql.sql")
 
     db_flush = db_sub.add_parser("flush")
-    db_flush.add_argument("--mssql", action="store_true")
-    db_flush.add_argument("--server")
-    db_flush.add_argument("--database")
-    db_flush.add_argument("--username")
-    db_flush.add_argument("--password")
+    _add_db_connection_args(db_flush)
     db_flush.add_argument("--table")
     db_flush.add_argument("--all", action="store_true")
+
+    # db clear (MSSQL only) - clears records
+    db_clear = db_sub.add_parser("clear")
+    _add_db_connection_args(db_clear)
+    db_clear.add_argument("--table")
+    db_clear.add_argument("--all", action="store_true")
 
     db_sub.add_parser("status")
 
@@ -174,9 +180,9 @@ def main() -> None:
     ingest_cmd("portfolio-contacts")
     ingest_cmd("portfolio-public-disclosures")
 
-    # ratings (EXPLICIT VERSIONING)
-    ingest_cmd("current-ratings")       # v1 → ingest/current_ratings.py
-    ingest_cmd("current-ratings-v2")    # v2 → ingest/current_ratings_v2.py
+    # current ratings v1 + v2
+    ingest_cmd("current-ratings")
+    ingest_cmd("current-ratings-v2")
 
     ingest_cmd("ratings-history", [
         (["--company-guid"], {}),
@@ -223,6 +229,7 @@ def main() -> None:
     args = parser.parse_args()
     setup_logging(args.verbose)
 
+    # shorthand exit aliases
     if args.command in ("exit", "quit", "x", "q"):
         exit_cli()
 
