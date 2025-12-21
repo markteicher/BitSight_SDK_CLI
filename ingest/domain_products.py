@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
+"""
+ingest/domain_products.py
+
+GET enterprise products used by a single domain from a particular company.
+
+Endpoint:
+    GET /ratings/v1/companies/{company_guid}/domains/{domain_name}/products
+
+Response:
+    Top-level JSON array of product objects (no pagination).
+"""
 
 import json
 import logging
-import requests
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
 
 BITSIGHT_DOMAIN_PRODUCTS_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/domains/{domain_name}/products"
@@ -12,46 +27,46 @@ BITSIGHT_DOMAIN_PRODUCTS_ENDPOINT = (
 
 
 def fetch_domain_products(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
     domain_name: str,
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    GET enterprise products used by a single domain from a particular company.
+    Fetch domain products for a single company + domain.
 
-    Endpoint:
-        /ratings/v1/companies/{company_guid}/domains/{domain_name}/products
-
-    Response:
-        Top-level JSON array of product objects (no pagination).
+    Returns:
+        List of records mapped 1:1 into dbo.bitsight_domain_products (raw preserved).
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_DOMAIN_PRODUCTS_ENDPOINT.format(company_guid=company_guid, domain_name=domain_name)}"
-    headers = {"Accept": "application/json"}
-
     ingested_at = datetime.utcnow()
+    path = BITSIGHT_DOMAIN_PRODUCTS_ENDPOINT.format(
+        company_guid=company_guid,
+        domain_name=domain_name,
+    )
 
     logging.info(
-        f"Fetching domain products for company {company_guid}, domain {domain_name}: {url}"
+        "Fetching domain products for company %s, domain %s",
+        company_guid,
+        domain_name,
     )
 
-    resp = session.get(
-        url,
-        headers=headers,
-        auth=(api_key, ""),
-        timeout=timeout,
-        proxies=proxies,
-    )
-    resp.raise_for_status()
+    try:
+        payload = ingest.request(path)
 
-    payload = resp.json()  # list[dict]
+    except TransportError:
+        raise
+
+    except Exception as exc:
+        raise TransportError(
+            str(exc),
+            StatusCode.INGESTION_FETCH_FAILED,
+        ) from exc
+
+    if not isinstance(payload, list):
+        raise TransportError(
+            "Unexpected response type (expected list)",
+            StatusCode.API_UNEXPECTED_RESPONSE,
+        )
 
     records: List[Dict[str, Any]] = []
     for obj in payload:
@@ -69,6 +84,9 @@ def fetch_domain_products(
         )
 
     logging.info(
-        f"Total domain products fetched for company {company_guid}, domain {domain_name}: {len(records)}"
+        "Total domain products fetched for company %s, domain %s: %d",
+        company_guid,
+        domain_name,
+        len(records),
     )
     return records
