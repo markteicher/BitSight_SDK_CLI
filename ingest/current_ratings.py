@@ -59,8 +59,10 @@ def fetch_current_ratings(
         next_link = links.get("next")
 
         if next_link:
-            url = _absolutize_next(url, next_link)
-            next_offset = _extract_offset(url)
+            next_url = _absolutize_next(url, next_link)
+
+            # Keep URL stable (no query mutation); only advance offset deterministically.
+            next_offset = _extract_offset(next_url)
             if next_offset is not None:
                 offset = next_offset
             else:
