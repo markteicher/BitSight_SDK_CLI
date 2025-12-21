@@ -20,10 +20,18 @@ def request_executive_report(
 ) -> Dict[str, Any]:
     """
     Request an Executive Report.
-    This is a POST endpoint that returns a report job descriptor.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+
+    Endpoint:
+        POST /ratings/v1/reports/executive
+
+    This endpoint submits a report generation request and returns
+    a job descriptor. It does not download the report.
+
+    Auth:
+        HTTP Basic Auth using api_key as username and blank password.
     """
 
+    # Normalize base URL
     if base_url.endswith("/"):
         base_url = base_url[:-1]
 
@@ -34,7 +42,7 @@ def request_executive_report(
     }
 
     payload: Dict[str, Any] = {
-        "format": report_format
+        "format": report_format,
     }
 
     if company_guid:
@@ -43,8 +51,9 @@ def request_executive_report(
     requested_at = datetime.utcnow()
 
     logging.info(
-        f"Requesting Executive Report "
-        f"(company_guid={company_guid}, format={report_format})"
+        "Requesting Executive Report | company_guid=%s format=%s",
+        company_guid,
+        report_format,
     )
 
     resp = session.post(
@@ -55,8 +64,8 @@ def request_executive_report(
         timeout=timeout,
         proxies=proxies,
     )
-    resp.raise_for_status()
 
+    resp.raise_for_status()
     response_payload = resp.json()
 
     record = {
@@ -65,5 +74,10 @@ def request_executive_report(
         "requested_at": requested_at,
         "raw_payload": response_payload,
     }
+
+    logging.info(
+        "Executive Report request accepted | company_guid=%s",
+        company_guid,
+    )
 
     return record
