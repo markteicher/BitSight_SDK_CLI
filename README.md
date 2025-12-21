@@ -1,343 +1,210 @@
-# BitSight SDK + CLI
+# 🛡️ BitSight SDK + CLI
 
-A production-grade BitSight SDK + CLI for collecting BitSight API data and writing it to a database (MSSQL first).
-
----
-
-## ✨ What this provides
-
-| Capability | What it does |
-|---|---|
-| 🧠 SDK modules | Python modules for calling BitSight endpoints deterministically |
-| 🗄️ Database-first ingestion | Writes API data into MSSQL tables defined in `db/schema/mssql.sql` |
-| 🔧 Control plane commands | `config`, `db`, `ingest` (state + data movement) |
-| 🔎 Inspection plane commands | `show`, `stats`, `health` (system-of-record visibility) |
-| 📦 Deterministic behavior | No stubs. No placeholders. Only real commands/modules |
+A production-oriented SDK + CLI for pulling BitSight API data and writing it into **Microsoft SQL Server (MSSQL)** using a **1:1 physical table representation** of BitSight endpoints.
 
 ---
 
-## 📦 Install / Run
+## ✅ Help and discovery
 
-If packaged as an executable:
+Running any of the following prints the **full command tree** (all commands + subcommands):
 
-```bash
-bitsight --help
-```
-
-If running from source:
-
-```bash
-python3 cli.py --help
-```
+- `bitsight --help`
+- `bitsight -h`
+- `bitsight help`
 
 ---
 
-## 🧭 Help and discovery
-
-Running any of the following prints the **full command tree**:
-
-```bash
-bitsight --help
-bitsight -h
-bitsight help
-```
-
----
-
-## 🚪 Exit / Quit
+## 🚪 Exit / quit
 
 The CLI supports explicit exit commands:
 
-```bash
-bitsight exit
-bitsight quit
-bitsight x
-bitsight q
-```
+- `bitsight exit`
+- `bitsight quit`
+- `x`
+- `q`
 
-When invoked, the CLI prints:
+On exit/quit it prints:
 
-> Thank for using the BitSight CLI
+> **Thank you for using the BitSight CLI**
 
 ---
 
-## 🌐 Global options
+## ⚙️ Global options
 
-These flags can be provided before any command:
+These options apply to all commands (when present on the CLI):
 
 | Option | Description |
 |---|---|
 | `--verbose` | Enable debug logging |
 | `--no-progress` | Disable progress bars |
-| `--api-key <token>` | BitSight API token (Basic Auth username) |
-| `--base-url <url>` | BitSight base URL (example: `https://api.bitsighttech.com`) |
-| `--proxy-url <url>` | Proxy URL (example: `http://proxy:8080`) |
-| `--timeout <seconds>` | HTTP timeout in seconds |
+| `--api-key` | BitSight API token (HTTP Basic Auth username) |
+| `--base-url` | BitSight API base URL (e.g., `https://api.bitsighttech.com`) |
+| `--proxy-url` | Proxy URL (e.g., `http://proxy:8080`) |
+| `--timeout` | HTTP timeout (seconds) |
 
 ---
 
-## 🧱 Command taxonomy
+## 🧭 Command taxonomy
 
-### A) Control plane
+The CLI is organized into two planes:
 
-Commands that change state or move data:
-
+### A) Control plane (changes state)
 - `config` — configuration management
-- `db` — database initialization / clearing
-- `ingest` — ingest API data into database tables
-- `ingest-group` — grouped ingestion sets
+- `db` — database initialization / maintenance
+- `ingest` — API → database ingestion
 
-### B) Inspection plane
+### B) Inspection plane (observes state)
+- `show` — query data already in the database (planned/next)
+- `stats` — summarize database contents (planned/next)
+- `health` — connection + schema + ingestion status checks (planned/next)
 
-Commands that observe the system-of-record:
-
-- `show` — inspect stored entities (tables)
-- `stats` — aggregate counts / rollups
-- `health` — connectivity + schema checks
+> `show/stats/health` are part of the agreed taxonomy and are wired after the control plane is complete.
 
 ---
 
-## 🧩 Full command tree
+## 🔐 `config` commands
 
-> This section lists **every command and subcommand**.
-
-### `bitsight help`
-
-Alias for `bitsight --help`.
-
----
-
-### `bitsight exit | quit | x | q`
-
-Exit the CLI and print:
-
-> Thank for using the BitSight CLI
-
----
-
-## 🔧 `config` — configuration management
-
-```bash
-bitsight config <subcommand>
-```
-
-| Subcommand | Purpose |
+| Command | Purpose |
 |---|---|
-| `init` | Create config file with defaults (if missing) |
-| `show` | Display current config |
-| `validate` | Validate required config fields |
-| `set` | Set one or more config values |
-| `reset` | Reset config to defaults |
-| `clear-keys` | Remove stored API key(s) |
+| `bitsight config init` | Create initial config state |
+| `bitsight config show` | Display current config |
+| `bitsight config validate` | Validate config + connectivity |
+| `bitsight config reset` | Reset config to defaults |
+| `bitsight config clear-keys` | Clear stored secrets/keys |
+| `bitsight config set ...` | Set config fields |
 
-#### `config set` options
+`config set` flags:
 
-```bash
-bitsight config set [--api-key ...] [--base-url ...] [--proxy-url ...] [--proxy-username ...] [--proxy-password ...] [--timeout ...]
-```
+- `--api-key`
+- `--base-url`
+- `--proxy-url`
+- `--proxy-username`
+- `--proxy-password`
+- `--timeout`
 
 ---
 
-## 🗄️ `db` — database management (MSSQL first)
+## 🗄️ `db` commands (MSSQL only)
 
+### Initialize schema
 ```bash
-bitsight db <subcommand>
+bitsight db init --mssql --server <server> --database <db> --username <user> --password <pass> --schema-path db/schema/mssql.sql
 ```
 
-| Subcommand | Purpose |
-|---|---|
-| `init` | Create BitSight tables in MSSQL using the schema file |
-| `status` | Show DB connectivity + schema presence |
-| `flush` | Delete rows from one table or all BitSight tables |
-| `clear` | Alias for `flush` (same behavior) |
-| `migrate` | Reserved for schema migrations (explicit only) |
-
-### `db init`
-
+### Flush data
 ```bash
-bitsight db init --mssql --server <server> --database <db> --username <user> --password <pass> [--schema-path db/schema/mssql.sql]
-```
+# Flush one table
+bitsight db flush --mssql --server <server> --database <db> --username <user> --password <pass> --table bitsight_users
 
-### `db flush` / `db clear`
-
-Flush one table:
-
-```bash
-bitsight db flush --mssql --server <server> --database <db> --username <user> --password <pass> --table <table_name>
-```
-
-Flush all BitSight tables:
-
-```bash
+# Flush all BitSight tables
 bitsight db flush --mssql --server <server> --database <db> --username <user> --password <pass> --all
 ```
 
----
-
-## 📥 `ingest` — endpoint ingestion (table-by-table)
-
+### Status
 ```bash
-bitsight ingest <endpoint> [endpoint options]
+bitsight db status
 ```
 
-All ingest commands support:
+---
 
-| Option | Meaning |
-|---|---|
-| `--flush` | Flush destination before ingest (module-defined behavior) |
+## 📥 `ingest` commands
 
-### Identity
+Each `ingest` command maps to a BitSight API endpoint and writes results into its corresponding MSSQL table(s).
 
-| Command | Notes |
-|---|---|
-| `ingest users` | GET users list |
-| `ingest user-details --user-guid <guid>` | GET user details |
-| `ingest user-quota` | GET user quota |
-| `ingest user-company-views` | GET your company views |
+### Users
+- `bitsight ingest users`
+- `bitsight ingest user-details --user-guid <guid>`
+- `bitsight ingest user-quota`
+- `bitsight ingest user-company-views`
 
-### Core entities
-
-| Command | Notes |
-|---|---|
-| `ingest companies` | GET companies |
-| `ingest company-details --company-guid <guid>` | GET company details |
+### Companies
+- `bitsight ingest companies`
+- `bitsight ingest company-details --company-guid <guid>`
 
 ### Portfolio
+- `bitsight ingest portfolio`
+- `bitsight ingest portfolio-details --company-guid <guid>`
+- `bitsight ingest portfolio-contacts`
+- `bitsight ingest portfolio-public-disclosures`
 
-| Command | Notes |
-|---|---|
-| `ingest portfolio` | GET portfolio |
-| `ingest portfolio-details --company-guid <guid>` | Portfolio details for one company |
-| `ingest portfolio-contacts` | Portfolio contact endpoints |
-| `ingest portfolio-public-disclosures` | Portfolio public disclosure endpoints |
+### Ratings
+- `bitsight ingest current-ratings`
+- `bitsight ingest ratings-history --company-guid <guid> --since <date> [--backfill]`
 
-### Posture
+### Findings & observations
+- `bitsight ingest findings --company-guid <guid> --since <date> [--expand <value>]`
+- `bitsight ingest observations --company-guid <guid> --since <date>`
 
-| Command | Notes |
-|---|---|
-| `ingest current-ratings` | GET current ratings |
-| `ingest ratings-history --company-guid <guid> [--since <date>] [--backfill]` | GET ratings history |
+### Threat intelligence / threats
+- `bitsight ingest threats`
+- `bitsight ingest threat-exposures`
 
-### Exposure
+### Alerts
+- `bitsight ingest alerts --since <date>`
 
-| Command | Notes |
-|---|---|
-| `ingest findings --company-guid <guid> [--since <date>] [--expand <mode>]` | GET findings |
-| `ingest observations --company-guid <guid> [--since <date>]` | GET observations |
-
-### Intelligence
-
-| Command | Notes |
-|---|---|
-| `ingest threats` | GET threats (v2) |
-| `ingest threat-exposures` | Threat exposure endpoints |
-| `ingest alerts [--since <date>]` | GET alerts |
-| `ingest credential-leaks` | Credential leak endpoints |
-| `ingest exposed-credentials` | Exposed credentials endpoints |
+### Credentials
+- `bitsight ingest credential-leaks`
+- `bitsight ingest exposed-credentials`
 
 ---
 
-## 📦 `ingest-group` — grouped ingestion
+## 🧩 `ingest-group` commands
 
-```bash
-bitsight ingest-group <group>
-```
+Grouped ingestion runs multiple ingestion commands in sequence:
 
-| Group | Includes |
-|---|---|
-| `core` | Identity + core entities + portfolio |
-| `security` | Posture + exposure + intelligence |
-| `all` | Everything |
+- `bitsight ingest-group core`
+- `bitsight ingest-group security`
+- `bitsight ingest-group all`
+
+(These groupings are explicitly wired.)
 
 ---
 
-## 🔎 `show` — inspect stored data
-
-```bash
-bitsight show <subcommand>
-```
-
-| Subcommand | Purpose |
-|---|---|
-| `tables` | List BitSight tables present |
-| `companies` | List companies (from DB) |
-| `assets` | List assets (from DB) |
-
----
-
-## 📊 `stats` — rollups and counts
-
-```bash
-bitsight stats <subcommand>
-```
-
-| Subcommand | Purpose |
-|---|---|
-| `tables` | Row counts per BitSight table |
-| `assets` | Asset totals |
-| `companies` | Company totals |
-| `ratings` | Rating record totals |
-
----
-
-## 💓 `health` — connectivity + schema checks
-
-```bash
-bitsight health <subcommand>
-```
-
-| Subcommand | Purpose |
-|---|---|
-| `db` | DB connection + required tables |
-| `api` | API connectivity + auth validation |
-| `proxy` | Proxy connectivity validation |
-
----
-
-## ✅ Common examples
-
-Initialize MSSQL schema:
-
-```bash
-bitsight db init --mssql --server sql01 --database BitSight --username bitsight --password '***'
-```
-
-Ingest users:
-
-```bash
-bitsight ingest users
-```
-
-Ingest findings for a specific company:
-
-```bash
-bitsight ingest findings --company-guid 92105617-5dfe-4fce-8606-acea90f732e2
-```
-
-Flush a single table:
-
-```bash
-bitsight db flush --mssql --server sql01 --database BitSight --username bitsight --password '***' --table bitsight_users
-```
-
-Flush all BitSight tables:
-
-```bash
-bitsight db flush --mssql --server sql01 --database BitSight --username bitsight --password '***' --all
-```
-
----
-
-## 📁 Repository structure
+## 🗂️ Directory structure
 
 ```text
 BitSight_SDK_CLI/
 ├── cli.py
 ├── core/
-├── ingest/
+│   ├── ingestion.py
+│   ├── status_codes.py
+│   ├── exit_codes.py
+│   ├── config.py
+│   ├── db_router.py
+│   └── database_interface.py
 ├── db/
 │   ├── init.py
 │   ├── mssql.py
 │   └── schema/
 │       └── mssql.sql
-└── README.md
+└── ingest/
+    ├── users.py
+    ├── user_details.py
+    ├── users_quota.py
+    ├── user_company_views.py
+    ├── companies.py
+    ├── company_details.py
+    ├── portfolio.py
+    ├── current_ratings.py
+    ├── ratings_history.py
+    ├── statistics.py
+    ├── findings.py
+    ├── findings_statistics.py
+    ├── observations.py
+    ├── threats.py
+    ├── threat_statistics.py
+    ├── threats_impact.py
+    └── threats_evidence.py
+```
+
+---
+
+## 🧱 Database schema
+
+MSSQL schema file:
+
+- `db/schema/mssql.sql`
+
+Tables store `raw_payload` as `NVARCHAR(MAX)` to preserve the full API response alongside typed columns.
+
+---
