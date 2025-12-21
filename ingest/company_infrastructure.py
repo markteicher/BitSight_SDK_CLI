@@ -2,10 +2,13 @@
 
 import json
 import logging
-import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
 
 BITSIGHT_COMPANY_INFRASTRUCTURE_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/infrastructure"
@@ -13,13 +16,10 @@ BITSIGHT_COMPANY_INFRASTRUCTURE_ENDPOINT = (
 
 
 def fetch_company_infrastructure(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
     asset_type: Optional[str] = None,   # e.g. DOMAIN, IP
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
+    limit: int = 100,
 ) -> List[Dict[str, Any]]:
     """
     Fetch infrastructure inventory for a company.
@@ -30,40 +30,38 @@ def fetch_company_infrastructure(
     Supports pagination via links.next and optional ?type= filter.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_INFRASTRUCTURE_ENDPOINT.format(company_guid=company_guid)}"
-    headers = {"Accept": "application/json"}
-
     ingested_at = datetime.utcnow()
-    records: List[Dict[str, Any]] = []
+    path = BITSIGHT_COMPANY_INFRASTRUCTURE_ENDPOINT.format(company_guid=company_guid)
 
-    limit = 100
+    records: List[Dict[str, Any]] = []
     offset = 0
 
     while True:
-        params = {"limit": limit, "offset": offset}
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
         if asset_type:
             params["type"] = asset_type
 
         logging.info(
-            f"Fetching infrastructure for company {company_guid}: "
-            f"{url} (limit={limit}, offset={offset})"
+            "Fetching infrastructure for company %s: %s (limit=%d, offset=%d)",
+            company_guid,
+            path,
+            limit,
+            offset,
         )
 
-        resp = session.get(
-            url,
-            headers=headers,
-            auth=(api_key, ""),
-            params=params,
-            timeout=timeout,
-            proxies=proxies,
-        )
-        resp.raise_for_status()
+        try:
+            payload = ingest.request(path, params=params)
 
-        payload = resp.json()
-        results = payload.get("results", [])
+        except TransportError:
+            raise
+
+        except Exception as exc:
+            raise TransportError(
+                str(exc),
+                StatusCode.INGESTION_FETCH_FAILED,
+            ) from exc
+
+        results = payload.get("results", []) or []
 
         for obj in results:
             attributed = obj.get("attributed_to") or {}
@@ -93,7 +91,6 @@ def fetch_company_infrastructure(
         next_link = links.get("next")
 
         if next_link:
-            url = _absolutize_next(url, next_link)
             offset += limit
             continue
 
@@ -103,12 +100,8 @@ def fetch_company_infrastructure(
         offset += limit
 
     logging.info(
-        f"Total infrastructure records fetched for company {company_guid}: {len(records)}"
+        "Total infrastructure records fetched for company %s: %d",
+        company_guid,
+        len(records),
     )
     return records
-
-
-def _absolutize_next(current_url: str, next_link: str) -> str:
-    if next_link.startswith("http://") or next_link.startswith("https://"):
-        return next_link
-    return urljoin(current_url, next_link)
