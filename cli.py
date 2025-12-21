@@ -99,6 +99,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     subparsers.add_parser("exit")
     subparsers.add_parser("quit")
+    subparsers.add_parser("x")
+    subparsers.add_parser("q")
 
     # ------------------------------------------------------------------
     # config
