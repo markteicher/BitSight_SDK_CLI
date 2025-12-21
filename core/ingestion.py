@@ -1,103 +1,207 @@
 #!/usr/bin/env python3
+"""
+core/ingestion.py
+
+Canonical ingestion execution framework for BitSight SDK + CLI.
+
+Responsibilities:
+- Execute one ingestion unit deterministically
+- Track counts and outcomes
+- Emit StatusCode for runtime events
+- Emit ExitCode exactly once at termination
+"""
+
+from __future__ import annotations
 
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional, Any, Iterable
+from typing import Iterable, Optional
 
 from tqdm import tqdm
 
 from core.status_codes import StatusCode
+from core.exit_codes import ExitCode
 
+
+# ============================================================
+# Data structures
+# ============================================================
 
 @dataclass
 class IngestionResult:
-    status: StatusCode
-    records_received: int
-    records_written: int
-    records_failed: int
-    start_time: float
-    end_time: float
-    error: Optional[Exception] = None
+    status_code: StatusCode
+    exit_code: ExitCode
+    records_fetched: int = 0
+    records_written: int = 0
+    records_failed: int = 0
+    duration_seconds: float = 0.0
+    message: Optional[str] = None
 
 
-class IngestionExecution:
+# ============================================================
+# Ingestion executor
+# ============================================================
+
+class IngestionExecutor:
     """
-    Orchestrates a single ingestion execution.
-    This class does not fetch data and does not write data.
-    It coordinates those steps and records execution outcomes.
+    Executes a single ingestion workload.
+
+    This class does not:
+    - parse CLI arguments
+    - perform API authentication
+    - manage database connections
+
+    It assumes all dependencies are already validated.
     """
 
     def __init__(
         self,
-        name: str,
-        progress_enabled: bool = True,
+        *,
+        fetcher: callable,
+        writer: callable,
+        expected_min_records: int = 0,
+        show_progress: bool = True,
     ):
-        self.name = name
-        self.progress_enabled = progress_enabled
+        self.fetcher = fetcher
+        self.writer = writer
+        self.expected_min_records = expected_min_records
+        self.show_progress = show_progress
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------
     # Public
-    # ------------------------------------------------------------------
-    def run(
-        self,
-        fetch_iterable: Iterable[Any],
-        write_fn,
-    ) -> IngestionResult:
-        """
-        Executes ingestion using:
-          - fetch_iterable: iterable of records from API layer
-          - write_fn(record): writes one record to destination
-
-        Returns an IngestionResult summarizing execution.
-        """
-        start = time.time()
-
-        received = 0
-        written = 0
-        failed = 0
+    # --------------------------------------------------------
+    def run(self) -> IngestionResult:
+        start_time = time.time()
 
         try:
-            iterator = (
-                tqdm(fetch_iterable, desc=self.name)
-                if self.progress_enabled
-                else fetch_iterable
+            records = self._fetch()
+            fetched_count = len(records)
+
+            if fetched_count == 0:
+                return self._finish(
+                    StatusCode.OK_NO_DATA,
+                    ExitCode.SUCCESS_EMPTY_RESULT,
+                    fetched=0,
+                    written=0,
+                    failed=0,
+                    start_time=start_time,
+                )
+
+            written, failed = self._write(records)
+
+            if written == 0 and failed > 0:
+                return self._finish(
+                    StatusCode.INGESTION_WRITE_FAILED,
+                    ExitCode.INGEST_ZERO_RECORDS,
+                    fetched=fetched_count,
+                    written=written,
+                    failed=failed,
+                    start_time=start_time,
+                )
+
+            if failed > 0:
+                return self._finish(
+                    StatusCode.INGESTION_PARTIAL_WRITE,
+                    ExitCode.INGEST_PARTIAL_FAILURE,
+                    fetched=fetched_count,
+                    written=written,
+                    failed=failed,
+                    start_time=start_time,
+                )
+
+            return self._finish(
+                StatusCode.OK,
+                ExitCode.SUCCESS,
+                fetched=fetched_count,
+                written=written,
+                failed=0,
+                start_time=start_time,
             )
 
-            for record in iterator:
-                received += 1
-                try:
-                    write_fn(record)
-                    written += 1
-                except Exception as exc:
-                    failed += 1
-                    logging.exception(
-                        "Record write failed during ingestion '%s'", self.name
-                    )
-
-            status = (
-                StatusCode.OK
-                if failed == 0
-                else StatusCode.PARTIAL_SUCCESS
-            )
-
-            return IngestionResult(
-                status=status,
-                records_received=received,
-                records_written=written,
-                records_failed=failed,
-                start_time=start,
-                end_time=time.time(),
+        except KeyboardInterrupt:
+            return self._finish(
+                StatusCode.INGESTION_INTERRUPTED,
+                ExitCode.RUNTIME_INTERRUPT,
+                start_time=start_time,
             )
 
         except Exception as exc:
-            logging.exception("Ingestion execution failed: %s", self.name)
-            return IngestionResult(
-                status=StatusCode.UNHANDLED_EXCEPTION,
-                records_received=received,
-                records_written=written,
-                records_failed=failed,
-                start_time=start,
-                end_time=time.time(),
-                error=exc,
+            logging.exception("Unhandled ingestion exception")
+            return self._finish(
+                StatusCode.EXECUTION_UNHANDLED_EXCEPTION,
+                ExitCode.RUNTIME_EXCEPTION,
+                start_time=start_time,
+                message=str(exc),
             )
+
+    # --------------------------------------------------------
+    # Internal
+    # --------------------------------------------------------
+    def _fetch(self) -> list:
+        records = self.fetcher()
+
+        if not isinstance(records, Iterable):
+            raise TypeError("Fetcher did not return iterable")
+
+        records = list(records)
+
+        if self.expected_min_records > 0 and len(records) < self.expected_min_records:
+            logging.warning(
+                "Fetched %d records, expected at least %d",
+                len(records),
+                self.expected_min_records,
+            )
+
+        return records
+
+    def _write(self, records: list) -> tuple[int, int]:
+        written = 0
+        failed = 0
+
+        iterator = records
+        if self.show_progress:
+            iterator = tqdm(records, desc="Ingesting records", unit="record")
+
+        for record in iterator:
+            try:
+                self.writer(record)
+                written += 1
+            except Exception:
+                failed += 1
+                logging.exception("Record write failed")
+
+        return written, failed
+
+    def _finish(
+        self,
+        status: StatusCode,
+        exit_code: ExitCode,
+        *,
+        fetched: int = 0,
+        written: int = 0,
+        failed: int = 0,
+        start_time: float,
+        message: Optional[str] = None,
+    ) -> IngestionResult:
+        duration = time.time() - start_time
+
+        logging.info(
+            "Ingestion completed | status=%s exit=%s fetched=%d written=%d failed=%d duration=%.2fs",
+            status.name,
+            exit_code.name,
+            fetched,
+            written,
+            failed,
+            duration,
+        )
+
+        return IngestionResult(
+            status_code=status,
+            exit_code=exit_code,
+            records_fetched=fetched,
+            records_written=written,
+            records_failed=failed,
+            duration_seconds=duration,
+            message=message,
+        )
