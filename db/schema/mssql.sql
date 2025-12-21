@@ -5,7 +5,7 @@
    ============================================================ */
 
 ---------------------------------------------------------------
--- GLOBAL METADATA (pagination, cursors, collection state)
+-- COLLECTION STATE / INGESTION METADATA
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_collection_state (
     endpoint_name     NVARCHAR(255) NOT NULL,
@@ -83,6 +83,38 @@ CREATE TABLE dbo.bitsight_company_details (
 );
 
 ---------------------------------------------------------------
+-- COMPANY RELATIONSHIPS / GOVERNANCE
+---------------------------------------------------------------
+CREATE TABLE dbo.bitsight_company_relationships (
+    relationship_guid   UNIQUEIDENTIFIER NOT NULL,
+    company_guid        UNIQUEIDENTIFIER NOT NULL,
+    company_name        NVARCHAR(255),
+    relationship_type   NVARCHAR(64),
+    creator             NVARCHAR(255),
+    last_editor         NVARCHAR(255),
+    created_time        DATETIME2,
+    last_edited_time    DATETIME2,
+    ingested_at         DATETIME2 NOT NULL,
+    raw_payload         NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_company_relationships
+        PRIMARY KEY (relationship_guid)
+);
+
+CREATE TABLE dbo.bitsight_company_requests (
+    request_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_company_requests PRIMARY KEY (request_guid)
+);
+
+CREATE TABLE dbo.bitsight_client_access_links (
+    link_guid    UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_client_access_links PRIMARY KEY (link_guid)
+);
+
+---------------------------------------------------------------
 -- PORTFOLIO
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_portfolio (
@@ -93,7 +125,7 @@ CREATE TABLE dbo.bitsight_portfolio (
 );
 
 ---------------------------------------------------------------
--- CURRENT RATINGS
+-- RATINGS
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_current_ratings (
     company_guid UNIQUEIDENTIFIER NOT NULL,
@@ -104,9 +136,6 @@ CREATE TABLE dbo.bitsight_current_ratings (
     CONSTRAINT PK_bitsight_current_ratings PRIMARY KEY (company_guid)
 );
 
----------------------------------------------------------------
--- RATINGS HISTORY
----------------------------------------------------------------
 CREATE TABLE dbo.bitsight_ratings_history (
     company_guid UNIQUEIDENTIFIER NOT NULL,
     rating_date  DATE NOT NULL,
@@ -118,7 +147,7 @@ CREATE TABLE dbo.bitsight_ratings_history (
 );
 
 ---------------------------------------------------------------
--- FINDINGS
+-- FINDINGS / OBSERVATIONS / COMMENTS
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_findings (
     finding_guid UNIQUEIDENTIFIER NOT NULL,
@@ -135,9 +164,6 @@ CREATE TABLE dbo.bitsight_findings_statistics (
     CONSTRAINT PK_bitsight_findings_statistics PRIMARY KEY (company_guid)
 );
 
----------------------------------------------------------------
--- OBSERVATIONS
----------------------------------------------------------------
 CREATE TABLE dbo.bitsight_observations (
     observation_guid UNIQUEIDENTIFIER NOT NULL,
     company_guid     UNIQUEIDENTIFIER,
@@ -146,40 +172,133 @@ CREATE TABLE dbo.bitsight_observations (
     CONSTRAINT PK_bitsight_observations PRIMARY KEY (observation_guid)
 );
 
+CREATE TABLE dbo.bitsight_finding_comments (
+    finding_guid     UNIQUEIDENTIFIER NOT NULL,
+    comment_guid     UNIQUEIDENTIFIER NOT NULL,
+    thread_guid      UNIQUEIDENTIFIER,
+    created_time     DATETIME2,
+    last_update_time DATETIME2,
+    message          NVARCHAR(MAX),
+    is_public        BIT,
+    is_deleted       BIT,
+    parent_guid      UNIQUEIDENTIFIER,
+    author_guid      UNIQUEIDENTIFIER,
+    author_name      NVARCHAR(255),
+    company_guid     UNIQUEIDENTIFIER,
+    tagged_users     NVARCHAR(MAX),
+    remediation      NVARCHAR(MAX),
+    ingested_at      DATETIME2 NOT NULL,
+    raw_payload      NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_finding_comments
+        PRIMARY KEY (finding_guid, comment_guid)
+);
+
 ---------------------------------------------------------------
--- THREATS (v2)
+-- ASSETS / INFRASTRUCTURE
+---------------------------------------------------------------
+CREATE TABLE dbo.bitsight_company_infrastructure (
+    company_guid    UNIQUEIDENTIFIER NOT NULL,
+    temporary_id    NVARCHAR(255) NOT NULL,
+    value           NVARCHAR(255),
+    asset_type      NVARCHAR(64),
+    source          NVARCHAR(255),
+    country         NVARCHAR(64),
+    start_date      DATE,
+    end_date        DATE,
+    is_active       BIT,
+    attributed_guid UNIQUEIDENTIFIER,
+    attributed_name NVARCHAR(255),
+    ip_count        INT,
+    is_suppressed   BIT,
+    asn             NVARCHAR(64),
+    tags            NVARCHAR(MAX),
+    ingested_at     DATETIME2 NOT NULL,
+    raw_payload     NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_company_infrastructure
+        PRIMARY KEY (company_guid, temporary_id)
+);
+
+CREATE TABLE dbo.bitsight_asset_summaries (
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_asset_summaries PRIMARY KEY (company_guid)
+);
+
+CREATE TABLE dbo.bitsight_asset_risk_matrix (
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_asset_risk_matrix PRIMARY KEY (company_guid)
+);
+
+---------------------------------------------------------------
+-- THREAT INTELLIGENCE (v2)
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_threats (
     threat_guid UNIQUEIDENTIFIER NOT NULL,
-    name        NVARCHAR(255),
     ingested_at DATETIME2 NOT NULL,
     raw_payload NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_threats PRIMARY KEY (threat_guid)
 );
 
----------------------------------------------------------------
--- ALERTS
----------------------------------------------------------------
-CREATE TABLE dbo.bitsight_alerts (
-    alert_guid UNIQUEIDENTIFIER NOT NULL,
+CREATE TABLE dbo.bitsight_threat_statistics (
+    scope       NVARCHAR(64) NOT NULL,
     ingested_at DATETIME2 NOT NULL,
     raw_payload NVARCHAR(MAX) NOT NULL,
-    CONSTRAINT PK_bitsight_alerts PRIMARY KEY (alert_guid)
+    CONSTRAINT PK_bitsight_threat_statistics PRIMARY KEY (scope)
 );
 
 ---------------------------------------------------------------
--- EXPOSED CREDENTIALS
+-- PRODUCTS / PROVIDERS / RATINGS TREE
 ---------------------------------------------------------------
-CREATE TABLE dbo.bitsight_exposed_credentials (
-    credential_guid UNIQUEIDENTIFIER NOT NULL,
-    company_guid    UNIQUEIDENTIFIER,
-    ingested_at     DATETIME2 NOT NULL,
-    raw_payload     NVARCHAR(MAX) NOT NULL,
-    CONSTRAINT PK_bitsight_exposed_credentials PRIMARY KEY (credential_guid)
+CREATE TABLE dbo.bitsight_company_products (
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    product_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_company_products
+        PRIMARY KEY (company_guid, product_guid)
+);
+
+CREATE TABLE dbo.bitsight_domain_products (
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    domain_name  NVARCHAR(255) NOT NULL,
+    product_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_domain_products
+        PRIMARY KEY (company_guid, domain_name, product_guid)
+);
+
+CREATE TABLE dbo.bitsight_domain_providers (
+    company_guid UNIQUEIDENTIFIER NOT NULL,
+    domain_name  NVARCHAR(255) NOT NULL,
+    provider_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_domain_providers
+        PRIMARY KEY (company_guid, domain_name, provider_guid)
+);
+
+CREATE TABLE dbo.bitsight_provider_products (
+    provider_guid UNIQUEIDENTIFIER NOT NULL,
+    product_guid  UNIQUEIDENTIFIER NOT NULL,
+    ingested_at   DATETIME2 NOT NULL,
+    raw_payload   NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_provider_products
+        PRIMARY KEY (provider_guid, product_guid)
+);
+
+CREATE TABLE dbo.bitsight_ratings_tree_product_types (
+    product_type NVARCHAR(255) NOT NULL,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_ratings_tree_product_types PRIMARY KEY (product_type)
 );
 
 ---------------------------------------------------------------
--- NEWS
+-- NEWS / ALERTS / INSIGHTS
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_news (
     news_guid    UNIQUEIDENTIFIER NOT NULL,
@@ -189,9 +308,13 @@ CREATE TABLE dbo.bitsight_news (
     CONSTRAINT PK_bitsight_news PRIMARY KEY (news_guid)
 );
 
----------------------------------------------------------------
--- INSIGHTS
----------------------------------------------------------------
+CREATE TABLE dbo.bitsight_alerts (
+    alert_guid UNIQUEIDENTIFIER NOT NULL,
+    ingested_at DATETIME2 NOT NULL,
+    raw_payload NVARCHAR(MAX) NOT NULL,
+    CONSTRAINT PK_bitsight_alerts PRIMARY KEY (alert_guid)
+);
+
 CREATE TABLE dbo.bitsight_insights (
     insight_guid UNIQUEIDENTIFIER NOT NULL,
     company_guid UNIQUEIDENTIFIER,
@@ -201,25 +324,7 @@ CREATE TABLE dbo.bitsight_insights (
 );
 
 ---------------------------------------------------------------
--- SUBSIDIARIES
----------------------------------------------------------------
-CREATE TABLE dbo.bitsight_subsidiaries (
-    subsidiary_guid      UNIQUEIDENTIFIER NOT NULL,
-    parent_company_guid  UNIQUEIDENTIFIER,
-    ingested_at          DATETIME2 NOT NULL,
-    raw_payload          NVARCHAR(MAX) NOT NULL,
-    CONSTRAINT PK_bitsight_subsidiaries PRIMARY KEY (subsidiary_guid)
-);
-
-CREATE TABLE dbo.bitsight_subsidiary_statistics (
-    subsidiary_guid UNIQUEIDENTIFIER NOT NULL,
-    ingested_at     DATETIME2 NOT NULL,
-    raw_payload     NVARCHAR(MAX) NOT NULL,
-    CONSTRAINT PK_bitsight_subsidiary_statistics PRIMARY KEY (subsidiary_guid)
-);
-
----------------------------------------------------------------
--- COMPLIANCE REPORTS
+-- COMPLIANCE / REPORTING
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_nist_csf_reports (
     company_guid UNIQUEIDENTIFIER NOT NULL,
@@ -229,33 +334,20 @@ CREATE TABLE dbo.bitsight_nist_csf_reports (
         PRIMARY KEY (company_guid, ingested_at)
 );
 
----------------------------------------------------------------
--- REPORT DOWNLOADS & EXECUTIVE REPORTS
----------------------------------------------------------------
 CREATE TABLE dbo.bitsight_reports (
-    report_id     NVARCHAR(255) NOT NULL,
-    report_type   NVARCHAR(128) NOT NULL,
-    company_guid  UNIQUEIDENTIFIER NULL,
-    status        NVARCHAR(64) NULL,
-    requested_at  DATETIME2 NULL,
-    completed_at  DATETIME2 NULL,
-    ingested_at   DATETIME2 NOT NULL,
-    raw_payload   NVARCHAR(MAX) NOT NULL,
+    report_id    NVARCHAR(255) NOT NULL,
+    report_type  NVARCHAR(128),
+    company_guid UNIQUEIDENTIFIER,
+    status       NVARCHAR(64),
+    requested_at DATETIME2,
+    completed_at DATETIME2,
+    ingested_at  DATETIME2 NOT NULL,
+    raw_payload  NVARCHAR(MAX) NOT NULL,
     CONSTRAINT PK_bitsight_reports PRIMARY KEY (report_id)
 );
 
 ---------------------------------------------------------------
--- GLOBAL STATISTICS & SUMMARIES
----------------------------------------------------------------
-CREATE TABLE dbo.bitsight_statistics (
-    scope        NVARCHAR(64) NOT NULL,
-    ingested_at  DATETIME2 NOT NULL,
-    raw_payload  NVARCHAR(MAX) NOT NULL,
-    CONSTRAINT PK_bitsight_statistics PRIMARY KEY (scope)
-);
-
----------------------------------------------------------------
--- LOOKUP / CATALOG ENDPOINTS (STATIC BUT PHYSICAL)
+-- LOOKUPS / CATALOGS
 ---------------------------------------------------------------
 CREATE TABLE dbo.bitsight_industries (
     industry_slug NVARCHAR(255) NOT NULL,
