@@ -1,8 +1,6 @@
 # BitSight_SDK_CLI
 Bitsight SDK and CLI
 
-# BitSight SDK + CLI
-
 A production-grade command-line interface and SDK for collecting BitSight data and persisting it into a database backend (currently MSSQL).
 
 This CLI is **non-interactive**. Each invocation executes a single command and exits.
