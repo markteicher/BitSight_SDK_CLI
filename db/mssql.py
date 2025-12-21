@@ -2,6 +2,7 @@
 
 import logging
 import pyodbc
+import json
 from typing import Iterable, Tuple, Any
 
 
@@ -28,6 +29,9 @@ class MSSQLDatabase:
 
         self.connection = self._connect()
 
+    # ------------------------------------------------------------
+    # Connection
+    # ------------------------------------------------------------
     def _connect(self) -> pyodbc.Connection:
         conn_str = (
             f"DRIVER={{{self.driver}}};"
@@ -40,23 +44,76 @@ class MSSQLDatabase:
             f"Connection Timeout={self.timeout};"
         )
 
-        logging.info("Connecting to MSSQL server %s database %s", self.server, self.database)
+        logging.info(
+            "Connecting to MSSQL server=%s database=%s",
+            self.server,
+            self.database,
+        )
         return pyodbc.connect(conn_str, autocommit=False)
 
+    # ------------------------------------------------------------
+    # Utilities
+    # ------------------------------------------------------------
+    def _normalize_param(self, value: Any) -> Any:
+        """
+        Ensure payloads are safe for MSSQL insertion.
+        Dicts/lists are always stored as JSON strings.
+        """
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
+    def table_exists(self, table_name: str) -> bool:
+        """
+        Validate required schema exists before ingestion.
+        """
+        sql = """
+        SELECT 1
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = 'dbo'
+          AND TABLE_NAME = ?
+        """
+        with self.connection.cursor() as cursor:
+            cursor.execute(sql, (table_name,))
+            return cursor.fetchone() is not None
+
+    # ------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------
     def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
-        cursor = self.connection.cursor()
-        cursor.execute(sql, params)
+        normalized = tuple(self._normalize_param(p) for p in params)
+        with self.connection.cursor() as cursor:
+            cursor.execute(sql, normalized)
 
     def executemany(self, sql: str, rows: Iterable[Tuple[Any, ...]]) -> None:
-        cursor = self.connection.cursor()
-        cursor.fast_executemany = True
-        cursor.executemany(sql, rows)
+        with self.connection.cursor() as cursor:
+            cursor.fast_executemany = True
+            normalized_rows = [
+                tuple(self._normalize_param(p) for p in row)
+                for row in rows
+            ]
+            cursor.executemany(sql, normalized_rows)
 
+    # ------------------------------------------------------------
+    # Transaction Control
+    # ------------------------------------------------------------
     def commit(self) -> None:
         self.connection.commit()
 
     def rollback(self) -> None:
         self.connection.rollback()
 
+    # ------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------
     def close(self) -> None:
-        self.connection.close()
+        try:
+            self.connection.close()
+        except Exception:
+            pass
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
