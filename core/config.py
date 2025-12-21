@@ -1,282 +1,181 @@
 #!/usr/bin/env python3
 
-import argparse
 import json
-import logging
-import sys
+import os
+from dataclasses import dataclass, asdict, replace
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-from tqdm import tqdm
-
-from core.config import Config
+from typing import Optional, Dict, Any
 
 
-# ----------------------------------------------------------------------
-# logging
-# ----------------------------------------------------------------------
-def setup_logging(verbose: bool):
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
+DEFAULT_BASE_URL = "https://api.bitsighttech.com"
+DEFAULT_TIMEOUT = 60
+DEFAULT_CONFIG_DIRNAME = ".bitsight"
+DEFAULT_CONFIG_FILENAME = "config.json"
+ENV_CONFIG_PATH = "BITSIGHT_CONFIG_PATH"
 
 
-# ----------------------------------------------------------------------
-# config helpers
-# ----------------------------------------------------------------------
-def _config_init(cfg: Config) -> None:
-    """
-    Create a deterministic config skeleton on disk.
-    Overwrites existing config only if file does not exist.
-    """
-    if cfg.path.exists():
-        logging.info("CONFIG_ALREADY_EXISTS path=%s", cfg.path)
-        return
-
-    cfg.reset()
-    cfg.set("api", "api_key", "")
-    cfg.set("api", "base_url", "https://api.bitsighttech.com")
-    cfg.set("api", "proxy", None)
-    cfg.set("api", "timeout", 60)
-
-    cfg.set("database", "backend", "mssql")
-    cfg.set("database", "server", "")
-    cfg.set("database", "database", "")
-    cfg.set("database", "username", "")
-    cfg.set("database", "password", "")
-    cfg.set("database", "driver", "ODBC Driver 18 for SQL Server")
-    cfg.set("database", "encrypt", True)
-    cfg.set("database", "trust_cert", False)
-    cfg.set("database", "timeout", 30)
-
-    cfg.save()
-    logging.info("CONFIG_INIT_OK path=%s", cfg.path)
+class ConfigError(Exception):
+    """Raised when configuration cannot be loaded, saved, or validated."""
 
 
-def _config_show(cfg: Config) -> None:
-    cfg.load()
-    # Redact secrets deterministically
-    data = json.loads(json.dumps(cfg._data))  # deep copy without imports
-    if isinstance(data.get("api", {}), dict):
-        if data["api"].get("api_key"):
-            data["api"]["api_key"] = "***REDACTED***"
-        proxy = data["api"].get("proxy")
-        if isinstance(proxy, dict) and proxy.get("password"):
-            proxy["password"] = "***REDACTED***"
-
-    if isinstance(data.get("database", {}), dict) and data["database"].get("password"):
-        data["database"]["password"] = "***REDACTED***"
-
-    sys.stdout.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
-    logging.info("CONFIG_SHOW_OK path=%s", cfg.path)
+def default_config_path() -> Path:
+    env = os.environ.get(ENV_CONFIG_PATH)
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / DEFAULT_CONFIG_DIRNAME / DEFAULT_CONFIG_FILENAME
 
 
-def _config_validate(cfg: Config) -> None:
-    cfg.load()
-    cfg.validate()
-    logging.info("CONFIG_VALIDATE_OK")
+def _normalize_base_url(value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        return DEFAULT_BASE_URL
+    # Accept both https://api.bitsighttech.com and https://api.bitsighttech.com/
+    v = v.rstrip("/")
+    return v
 
 
-def _config_reset(cfg: Config) -> None:
-    """
-    Remove config file from disk (full reset).
-    """
-    if cfg.path.exists():
-        cfg.path.unlink()
-        logging.info("CONFIG_RESET_OK path=%s", cfg.path)
-    else:
-        logging.info("CONFIG_RESET_NOOP path=%s", cfg.path)
+@dataclass(frozen=True)
+class Config:
+    api_key: Optional[str] = None
+    base_url: str = DEFAULT_BASE_URL
+
+    proxy_url: Optional[str] = None
+    proxy_username: Optional[str] = None
+    proxy_password: Optional[str] = None
+
+    timeout: int = DEFAULT_TIMEOUT
+
+    mssql_server: Optional[str] = None
+    mssql_database: Optional[str] = None
+    mssql_username: Optional[str] = None
+    mssql_password: Optional[str] = None
+    mssql_driver: str = "ODBC Driver 18 for SQL Server"
+    mssql_encrypt: bool = True
+    mssql_trust_cert: bool = False
+    mssql_timeout: int = 30
+
+    def to_dict(self, include_secrets: bool = True) -> Dict[str, Any]:
+        d = asdict(self)
+        if not include_secrets:
+            for k in ("api_key", "proxy_password", "mssql_password"):
+                if d.get(k):
+                    d[k] = "***"
+        return d
+
+    def proxies(self) -> Optional[Dict[str, str]]:
+        if not self.proxy_url:
+            return None
+        url = self.proxy_url.strip()
+        if not url:
+            return None
+        return {"http": url, "https": url}
+
+    def validate(self, require_api_key: bool = False) -> None:
+        if require_api_key and not (self.api_key and self.api_key.strip()):
+            raise ConfigError("Missing api_key")
+
+        if self.timeout <= 0:
+            raise ConfigError("timeout must be > 0")
+
+        base = _normalize_base_url(self.base_url)
+        if not (base.startswith("http://") or base.startswith("https://")):
+            raise ConfigError("base_url must start with http:// or https://")
+
+        if self.proxy_url is not None:
+            p = self.proxy_url.strip()
+            if p and not (p.startswith("http://") or p.startswith("https://")):
+                raise ConfigError("proxy_url must start with http:// or https://")
+
+        # DB config is validated at point-of-use.
 
 
-def _config_clear_keys(cfg: Config) -> None:
-    """
-    Clear secret material only (API key, proxy password, DB password).
-    """
-    cfg.load()
+class ConfigStore:
+    def __init__(self, path: Optional[str] = None):
+        self.path = Path(path).expanduser() if path else default_config_path()
 
-    api = cfg._data.get("api", {})
-    if isinstance(api, dict):
-        api["api_key"] = ""
-        proxy = api.get("proxy")
-        if isinstance(proxy, dict):
-            proxy["password"] = ""
+    def exists(self) -> bool:
+        return self.path.exists()
 
-    db = cfg._data.get("database", {})
-    if isinstance(db, dict):
-        db["password"] = ""
+    def load(self) -> Config:
+        if not self.path.exists():
+            return Config()
 
-    cfg.save()
-    logging.info("CONFIG_CLEAR_KEYS_OK")
+        try:
+            raw = self.path.read_text(encoding="utf-8")
+        except Exception as e:
+            raise ConfigError(f"Unable to read config: {self.path} ({e})") from e
 
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except Exception as e:
+            raise ConfigError(f"Invalid JSON in config: {self.path} ({e})") from e
 
-def _config_set(cfg: Config, args: argparse.Namespace) -> None:
-    cfg.load()
+        if not isinstance(data, dict):
+            raise ConfigError("Config root must be a JSON object")
 
-    if args.api_key is not None:
-        cfg.set("api", "api_key", args.api_key)
-    if args.base_url is not None:
-        cfg.set("api", "base_url", args.base_url)
-    if args.timeout is not None:
-        cfg.set("api", "timeout", int(args.timeout))
+        # Backward-compatible: ignore unknown keys.
+        kwargs: Dict[str, Any] = {}
+        for field in Config.__dataclass_fields__.keys():
+            if field in data:
+                kwargs[field] = data[field]
 
-    # proxy: only set if any proxy fields provided
-    if (
-        args.proxy_url is not None
-        or args.proxy_username is not None
-        or args.proxy_password is not None
-    ):
-        proxy: Dict[str, Any] = cfg._data.get("api", {}).get("proxy") or {}
-        if args.proxy_url is not None:
-            proxy["url"] = args.proxy_url
-        if args.proxy_username is not None:
-            proxy["username"] = args.proxy_username
-        if args.proxy_password is not None:
-            proxy["password"] = args.proxy_password
-        cfg.set("api", "proxy", proxy)
+        # Normalize.
+        if "base_url" in kwargs:
+            kwargs["base_url"] = _normalize_base_url(str(kwargs["base_url"]))
 
-    cfg.save()
-    logging.info("CONFIG_SET_OK")
+        cfg = Config(**kwargs)
+        cfg.validate(require_api_key=False)
+        return cfg
 
+    def save(self, cfg: Config) -> None:
+        cfg = replace(cfg, base_url=_normalize_base_url(cfg.base_url))
+        cfg.validate(require_api_key=False)
 
-# ----------------------------------------------------------------------
-# main
-# ----------------------------------------------------------------------
-def main():
-    parser = argparse.ArgumentParser(prog="bitsight", description="BitSight SDK + CLI")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    # global flags
-    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    parser.add_argument(
-        "--no-progress", action="store_true", help="Disable progress bars (CI-safe)"
-    )
-    parser.add_argument(
-        "--config-path",
-        default=None,
-        help="Override config path (default: ~/.bitsight/config.json)",
-    )
+        payload = json.dumps(cfg.to_dict(include_secrets=True), indent=2, sort_keys=True)
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+        try:
+            tmp.write_text(payload + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
+        except Exception as e:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
+            raise ConfigError(f"Unable to write config: {self.path} ({e})") from e
 
-    # ------------------------------------------------------------------
-    # config
-    # ------------------------------------------------------------------
-    config = subparsers.add_parser("config", help="Configuration management")
-    config_sub = config.add_subparsers(dest="subcommand", required=True)
+    def reset(self) -> Config:
+        cfg = Config()
+        self.save(cfg)
+        return cfg
 
-    config_sub.add_parser("init")
-    config_sub.add_parser("show")
-    config_sub.add_parser("validate")
-    config_sub.add_parser("reset")
-    config_sub.add_parser("clear-keys")
+    def clear_keys(self) -> Config:
+        cfg = self.load()
+        cfg = replace(
+            cfg,
+            api_key=None,
+            proxy_password=None,
+            mssql_password=None,
+        )
+        self.save(cfg)
+        return cfg
 
-    config_set = config_sub.add_parser("set")
-    config_set.add_argument("--api-key")
-    config_set.add_argument("--base-url")
-    config_set.add_argument("--proxy-url")
-    config_set.add_argument("--proxy-username")
-    config_set.add_argument("--proxy-password")
-    config_set.add_argument("--timeout", type=int)
+    def set_fields(self, **updates: Any) -> Config:
+        cfg = self.load()
+        allowed = set(Config.__dataclass_fields__.keys())
+        for k in updates.keys():
+            if k not in allowed:
+                raise ConfigError(f"Unknown config field: {k}")
 
-    # ------------------------------------------------------------------
-    # db (unchanged wiring here; will be routed later via DatabaseRouter)
-    # ------------------------------------------------------------------
-    db = subparsers.add_parser("db", help="Database management")
-    db_sub = db.add_subparsers(dest="subcommand", required=True)
+        if "base_url" in updates and updates["base_url"] is not None:
+            updates["base_url"] = _normalize_base_url(str(updates["base_url"]))
 
-    db_init = db_sub.add_parser("init")
-    db_init.add_argument("--sqlite")
-    db_init.add_argument("--mssql", action="store_true")
-    db_init.add_argument("--postgres", action="store_true")
-    db_init.add_argument("--server")
-    db_init.add_argument("--database")
-    db_init.add_argument("--username")
-    db_init.add_argument("--password")
+        if "timeout" in updates and updates["timeout"] is not None:
+            updates["timeout"] = int(updates["timeout"])
 
-    db_sub.add_parser("status")
-
-    db_flush = db_sub.add_parser("flush")
-    db_flush.add_argument("--table")
-    db_flush.add_argument("--all", action="store_true")
-
-    db_sub.add_parser("migrate")
-
-    # ------------------------------------------------------------------
-    # ingest (unchanged dispatch for now)
-    # ------------------------------------------------------------------
-    ingest = subparsers.add_parser("ingest", help="Data ingestion")
-    ingest_sub = ingest.add_subparsers(dest="subcommand", required=True)
-
-    def ingest_cmd(name, extra_args=None):
-        p = ingest_sub.add_parser(name)
-        if extra_args:
-            for arg in extra_args:
-                p.add_argument(*arg[0], **arg[1])
-        p.add_argument("--flush", action="store_true")
-        p.set_defaults(handler=name.replace("-", "_"))
-        return p
-
-    ingest_cmd("users")
-    ingest_cmd("user-details", [(["--user-guid"], {})])
-    ingest_cmd("user-quota")
-    ingest_cmd("user-company-views")
-
-    ingest_cmd("companies")
-    ingest_cmd("company-details", [(["--company-guid"], {})])
-
-    ingest_cmd("portfolio")
-    ingest_cmd("current-ratings")
-    ingest_cmd("ratings-history", [(["--company-guid"], {}), (["--since"], {})])
-    ingest_cmd("findings", [(["--company-guid"], {}), (["--since"], {})])
-    ingest_cmd("observations", [(["--company-guid"], {}), (["--since"], {})])
-
-    ingest_cmd("threats")
-    ingest_cmd("alerts", [(["--since"], {})])
-    ingest_cmd("exposed-credentials")
-
-    # ------------------------------------------------------------------
-    # parse + runtime
-    # ------------------------------------------------------------------
-    args = parser.parse_args()
-    setup_logging(args.verbose)
-    logging.debug("CLI arguments: %s", vars(args))
-
-    cfg_path = Path(args.config_path) if args.config_path else None
-    cfg = Config(path=cfg_path)
-
-    # ------------------------------------------------------------------
-    # dispatch: config (wired to core/config.py)
-    # ------------------------------------------------------------------
-    if args.command == "config":
-        if args.subcommand == "init":
-            _config_init(cfg)
-            return 0
-        if args.subcommand == "show":
-            _config_show(cfg)
-            return 0
-        if args.subcommand == "validate":
-            _config_validate(cfg)
-            return 0
-        if args.subcommand == "reset":
-            _config_reset(cfg)
-            return 0
-        if args.subcommand == "clear-keys":
-            _config_clear_keys(cfg)
-            return 0
-        if args.subcommand == "set":
-            _config_set(cfg, args)
-            return 0
-
-        logging.error("CONFIG_UNHANDLED subcommand=%s", args.subcommand)
-        return 1
-
-    # Other command groups remain to be wired next.
-    logging.info("COMMAND_ACCEPTED command=%s subcommand=%s", args.command, getattr(args, "subcommand", None))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+        cfg = replace(cfg, **{k: v for k, v in updates.items() if v is not None})
+        self.save(cfg)
+        return cfg
