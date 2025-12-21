@@ -1,6 +1,6 @@
 # 🛡️ BitSight SDK + CLI
 
-A Software Developer's Kit and Command Line Interpreter interfacd for  Bitsight Security Ratings. 
+A Software Developer's Kit and Command Line Interpreter interface for  Bitsight Security Ratings. 
 
 BitSight Security Ratings allows for monitoring security ratings, portfolio companies, alerts, findings, exposed credentials, users, and threat intelligence.
 
