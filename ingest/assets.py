@@ -2,7 +2,7 @@
 
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from urllib.parse import urljoin
 
@@ -30,15 +30,20 @@ def fetch_assets(
         HTTP Basic Auth using api_key as username and blank password.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ValueError("base_url must be a non-empty string")
+
+    if not company_guid or not isinstance(company_guid, str):
+        raise ValueError("company_guid must be a non-empty string")
+
+    base_url = base_url.rstrip("/")
 
     endpoint = BITSIGHT_COMPANY_ASSETS_ENDPOINT.format(company_guid=company_guid)
     url = f"{base_url}{endpoint}"
     headers = {"Accept": "application/json"}
 
     records: List[Dict[str, Any]] = []
-    ingested_at = datetime.utcnow()
+    ingested_at = datetime.now(timezone.utc)
 
     limit = 100
     offset = 0
@@ -46,8 +51,11 @@ def fetch_assets(
     while True:
         params = {"limit": limit, "offset": offset}
         logging.info(
-            f"Fetching assets for company {company_guid}: {url} "
-            f"(limit={limit}, offset={offset})"
+            "Fetching assets for company %s: %s (limit=%d, offset=%d)",
+            company_guid,
+            url,
+            limit,
+            offset,
         )
 
         resp = session.get(
@@ -87,7 +95,9 @@ def fetch_assets(
         offset += limit
 
     logging.info(
-        f"Total assets fetched for company {company_guid}: {len(records)}"
+        "Total assets fetched for company %s: %d",
+        company_guid,
+        len(records),
     )
     return records
 
