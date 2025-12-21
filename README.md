@@ -1,110 +1,168 @@
 # BitSight_SDK_CLI
 Bitsight SDK and CLI
 
-Purpose
-This package provides a command-line interface and SDK to retrieve BitSight API data and persist it into a configured database backend. The CLI is a control surface only. It does not perform analytics, reporting, or visualization.
+# BitSight SDK + CLI
 
-Executable
-bitsight
+A production-grade command-line interface and SDK for collecting BitSight data and persisting it into a database backend (currently MSSQL).
 
-Help and Discovery
-Running any of the following prints the full command tree:
-- bitsight --help
-- bitsight -h
-- bitsight help
+This CLI is **non-interactive**. Each invocation executes a single command and exits.
 
-Exit / Quit
-The CLI supports explicit exit commands:
-- bitsight exit
-- bitsight quit
-- x
-- q
+---
 
-When invoked, the CLI prints:
-"Thank you for using the BitSight CLI"
+## Help and Command Discovery
 
-Global Options
-These flags are accepted by all commands:
---api-key        BitSight API token
---base-url       BitSight API base URL
---proxy-url      HTTP/HTTPS proxy URL
---timeout        HTTP timeout (seconds)
---verbose        Enable debug logging
---no-progress    Disable progress bars
+Running any of the following prints the **complete command tree**, including all commands and subcommands:
 
-Command Planes
+- `bitsight --help`
+- `bitsight -h`
+- `bitsight help`
 
-Control Plane
-Commands that change configuration or system state.
+These commands list **every available operation** supported by the BitSight CLI.
 
-config
-  init
-  show
-  set
-  validate
-  reset
-  clear-keys
+---
 
-db
-  init        Initialize database schema
-  status      Show database connectivity and schema presence
-  flush       Delete records (table or all)
-  clear       Alias of flush --all (MSSQL only)
+## Exit / Quit Commands
 
-ingest
-  users
-  user-details
-  user-quota
-  user-company-views
-  companies
-  company-details
-  portfolio
-  portfolio-details
-  current-ratings
-  ratings-history
-  findings
-  findings-statistics
-  findings-details
-  observations
-  threats
-  threat-statistics
-  threat-impact
-  threat-evidence
-  assets
-  asset-risk-matrix
-  exposed-credentials
-  alerts
-  insights
-  news
-  subsidiaries
-  subsidiary-statistics
-  nist-csf
-  ratings-history
+The CLI provides explicit commands to terminate execution immediately:
 
-Inspection Plane
-Commands that observe the system of record.
+- `bitsight exit`
+- `bitsight quit`
 
-show
-  tables
-  counts
-  companies
-  assets
+These commands exit cleanly and display:
 
-status
-  health
-  last-run
-  errors
+```
+Thank you for using the BitSight CLI
+```
 
-Execution Model
-- All commands return explicit exit codes
-- All API calls are deterministic
-- All database writes are transactional
-- All failures surface immediately with exit code and log message
+> Note: Single-key commands such as `x` or `q` are **not supported**.  
+> The CLI is not interactive and does not wait for user input.
 
-Databases
-Currently supported:
-- MSSQL
+---
 
-No other database backends are enabled unless explicitly configured.
+## Command Planes
 
-End of document
+The CLI is organized into clear functional planes.
+
+### Control Plane
+Commands that modify configuration, state, or stored data.
+
+- `config`
+- `db`
+- `ingest`
+
+### Inspection Plane
+Commands that inspect or report on the system of record.
+
+- `show`
+- `stats`
+- `status`
+- `health`
+
+---
+
+## Configuration Commands
+
+Manage BitSight API and runtime configuration.
+
+```
+bitsight config init
+bitsight config show
+bitsight config validate
+bitsight config set
+bitsight config reset
+bitsight config clear-keys
+```
+
+---
+
+## Database Commands (MSSQL)
+
+Manage the database backend.
+
+```
+bitsight db init --mssql
+bitsight db status
+bitsight db flush --mssql --table <table>
+bitsight db flush --mssql --all
+bitsight db clear --mssql
+```
+
+---
+
+## Ingestion Commands
+
+Ingest data from BitSight APIs into the configured database.
+
+### Identity
+```
+bitsight ingest users
+bitsight ingest user-details
+bitsight ingest user-quota
+bitsight ingest user-company-views
+```
+
+### Companies & Portfolio
+```
+bitsight ingest companies
+bitsight ingest company-details
+bitsight ingest portfolio
+```
+
+### Ratings
+```
+bitsight ingest current-ratings
+bitsight ingest ratings-history
+```
+
+### Findings & Observations
+```
+bitsight ingest findings
+bitsight ingest observations
+```
+
+### Threat Intelligence
+```
+bitsight ingest threats
+bitsight ingest threat-statistics
+bitsight ingest threat-impact
+bitsight ingest threat-evidence
+```
+
+### Exposure & Alerts
+```
+bitsight ingest exposed-credentials
+bitsight ingest alerts
+```
+
+---
+
+## Grouped Ingestion
+
+Execute predefined ingestion sets.
+
+```
+bitsight ingest-group core
+bitsight ingest-group security
+bitsight ingest-group all
+```
+
+---
+
+## Status and Inspection
+
+Inspect the state of the system and stored data.
+
+```
+bitsight status tables
+bitsight status last-run
+bitsight status health
+```
+
+---
+
+## Summary
+
+- The CLI is **explicit, deterministic, and non-interactive**
+- All behavior is discoverable via `--help`
+- Only documented commands exist
+- No implicit shortcuts or hidden behaviors
