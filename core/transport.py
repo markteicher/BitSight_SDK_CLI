@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 import logging
-import socket
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import requests
 from requests import Session
+
+from core.status_codes import StatusCode
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,7 @@ class TransportConfig:
 
 
 class TransportError(Exception):
-    def __init__(self, message: str, status_code, http_status: Optional[int] = None):
+    def __init__(self, message: str, status_code: StatusCode, http_status: Optional[int] = None):
         super().__init__(message)
         self.status_code = status_code
         self.http_status = http_status
@@ -33,8 +34,7 @@ class TransportError(Exception):
 def _normalize_base_url(base_url: str) -> str:
     if not isinstance(base_url, str) or not base_url.strip():
         raise ValueError("base_url must be a non-empty string")
-    base_url = base_url.strip().rstrip("/")
-    return base_url
+    return base_url.strip().rstrip("/")
 
 
 def _validate_proxy_config(cfg: TransportConfig) -> None:
@@ -61,7 +61,6 @@ def _build_proxies(cfg: TransportConfig) -> Optional[Dict[str, str]]:
 
     parsed = urlparse(cfg.proxy_url)
 
-    # If proxy auth is provided, inject it into the netloc
     if cfg.proxy_username and cfg.proxy_password:
         netloc = f"{cfg.proxy_username}:{cfg.proxy_password}@{parsed.hostname}"
         if parsed.port:
@@ -74,12 +73,8 @@ def _build_proxies(cfg: TransportConfig) -> Optional[Dict[str, str]]:
 
 def build_session(cfg: TransportConfig) -> Tuple[Session, Optional[Dict[str, str]]]:
     _validate_proxy_config(cfg)
-
     session = requests.Session()
     proxies = _build_proxies(cfg)
-
-    # Do not set auth headers globally; BitSight uses Basic Auth (api_key, "")
-    # Auth is applied per-request to avoid cross-target leakage.
     return session, proxies
 
 
@@ -87,23 +82,20 @@ def validate_bitsight_api(
     session: Session,
     cfg: TransportConfig,
     proxies: Optional[Dict[str, str]],
-    status_codes_module_path: str = "core.status_codes",
 ) -> None:
     """
-    Validates network path + proxy + TLS + BitSight auth deterministically.
-
-    Uses GET /ratings/v1/current-ratings?limit=1&offset=0
-    (HEAD is not assumed supported.)
+    Validate BitSight API connectivity and authentication.
 
     Raises TransportError with a StatusCode on failure.
     """
-    # Late import so this file stays self-contained & does not hard-couple at import time.
-    status_mod = __import__(status_codes_module_path, fromlist=["StatusCode"])
-    StatusCode = getattr(status_mod, "StatusCode")
 
     base_url = _normalize_base_url(cfg.base_url)
-    if not cfg.api_key or not isinstance(cfg.api_key, str) or not cfg.api_key.strip():
-        raise TransportError("API key missing", StatusCode.CONFIG_INVALID)
+
+    if not cfg.api_key or not cfg.api_key.strip():
+        raise TransportError(
+            "API key missing",
+            StatusCode.AUTH_API_KEY_MISSING,
+        )
 
     url = f"{base_url}/ratings/v1/current-ratings"
     params = {"limit": 1, "offset": 0}
@@ -122,48 +114,45 @@ def validate_bitsight_api(
         )
 
     except requests.exceptions.ProxyError as e:
-        raise TransportError(f"Proxy error: {e}", StatusCode.API_CONNECTION_FAILED) from e
+        raise TransportError(str(e), StatusCode.TRANSPORT_PROXY_ERROR) from e
 
     except requests.exceptions.SSLError as e:
-        raise TransportError(f"SSL error: {e}", StatusCode.API_SSL_ERROR) from e
+        raise TransportError(str(e), StatusCode.TRANSPORT_SSL_ERROR) from e
 
     except requests.exceptions.Timeout as e:
-        raise TransportError(f"API timeout: {e}", StatusCode.API_TIMEOUT) from e
+        raise TransportError(str(e), StatusCode.TRANSPORT_TIMEOUT) from e
 
     except requests.exceptions.ConnectionError as e:
-        # Try to distinguish DNS failure (best-effort, deterministic enough for ops)
-        # If we cannot, treat as connection failed.
         msg = str(e)
-        if "Name or service not known" in msg or "Temporary failure in name resolution" in msg:
-            raise TransportError(f"DNS failure: {e}", StatusCode.API_DNS_FAILURE) from e
-        raise TransportError(f"Connection failed: {e}", StatusCode.API_CONNECTION_FAILED) from e
+        if "name or service not known" in msg.lower():
+            raise TransportError(str(e), StatusCode.TRANSPORT_DNS_FAILURE) from e
+        raise TransportError(str(e), StatusCode.TRANSPORT_CONNECTION_FAILED) from e
 
     except Exception as e:
-        raise TransportError(f"Unexpected transport failure: {e}", StatusCode.API_UNEXPECTED_RESPONSE) from e
+        raise TransportError(str(e), StatusCode.API_UNEXPECTED_RESPONSE) from e
 
     http_status = resp.status_code
 
     if http_status == 200:
-        logging.info("API validation succeeded (HTTP 200)")
         return
 
     if http_status == 401:
-        raise TransportError("Unauthorized (HTTP 401)", StatusCode.AUTH_FAILED, http_status=http_status)
+        raise TransportError("Unauthorized", StatusCode.API_UNAUTHORIZED, http_status)
 
     if http_status == 403:
-        raise TransportError("Permission denied (HTTP 403)", StatusCode.PERMISSION_DENIED, http_status=http_status)
+        raise TransportError("Forbidden", StatusCode.API_FORBIDDEN, http_status)
 
     if http_status == 404:
-        raise TransportError("Endpoint not found (HTTP 404)", StatusCode.API_NOT_FOUND, http_status=http_status)
+        raise TransportError("Not found", StatusCode.API_NOT_FOUND, http_status)
 
     if http_status == 429:
-        raise TransportError("Rate limited (HTTP 429)", StatusCode.API_RATE_LIMITED, http_status=http_status)
+        raise TransportError("Rate limited", StatusCode.API_RATE_LIMITED, http_status)
 
     if 500 <= http_status <= 599:
-        raise TransportError(f"Server error (HTTP {http_status})", StatusCode.API_SERVER_ERROR, http_status=http_status)
+        raise TransportError("Server error", StatusCode.API_SERVER_ERROR, http_status)
 
     raise TransportError(
-        f"Unexpected HTTP status (HTTP {http_status})",
+        f"Unexpected HTTP status {http_status}",
         StatusCode.API_UNEXPECTED_RESPONSE,
-        http_status=http_status,
+        http_status,
     )
