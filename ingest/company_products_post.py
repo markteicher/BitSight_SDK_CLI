@@ -2,9 +2,13 @@
 
 import json
 import logging
-import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
 
 BITSIGHT_COMPANY_PRODUCTS_POST_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/products"
@@ -12,14 +16,10 @@ BITSIGHT_COMPANY_PRODUCTS_POST_ENDPOINT = (
 
 
 def fetch_company_products_post(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
+    ingest: BitSightIngestBase,
     company_guid: str,
     body: Optional[Dict[str, Any]] = None,
     params: Optional[Dict[str, Any]] = None,
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     POST: Get Products of a Company
@@ -31,51 +31,57 @@ def fetch_company_products_post(
         Top-level JSON array of product objects.
 
     Notes:
-      - This endpoint supports body-based filters (e.g., product_guid[], product_types[],
-        provider_guid[], provider_name[], relative_criticality[], relationship_source[]),
-        plus query params like fields/limit/offset/q/sort.  [oai_citation:3‡Bitsight Knowledge Base](https://help.bitsighttech.com/hc/en-us/articles/14500448609303-POST-Get-Products-of-a-Company?utm_source=chatgpt.com)
-      - Pagination is deterministic via limit/offset when used.
+      - Supports body-based filters and query params like fields/limit/offset/q/sort.
+      - Pagination is deterministic via limit/offset when limit is provided.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_PRODUCTS_POST_ENDPOINT.format(company_guid=company_guid)}"
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-
     ingested_at = datetime.utcnow()
-    records: List[Dict[str, Any]] = []
+    path = BITSIGHT_COMPANY_PRODUCTS_POST_ENDPOINT.format(
+        company_guid=company_guid
+    )
 
     body = body or {}
     params = params.copy() if params else {}
 
-    # Deterministic pagination if caller supplies limit; otherwise fetch "all" once
     limit = params.get("limit")
     offset = params.get("offset", 0)
+
+    records: List[Dict[str, Any]] = []
 
     while True:
         if limit is not None:
             params["limit"] = limit
             params["offset"] = offset
-
             logging.info(
-                f"POST company products for {company_guid}: {url} (limit={limit}, offset={offset})"
+                "POST company products for %s: %s (limit=%s, offset=%s)",
+                company_guid,
+                path,
+                str(limit),
+                str(offset),
             )
         else:
-            logging.info(f"POST company products for {company_guid}: {url}")
+            logging.info(
+                "POST company products for %s: %s",
+                company_guid,
+                path,
+            )
 
-        resp = session.post(
-            url,
-            headers=headers,
-            auth=(api_key, ""),
-            params=params if params else None,
-            data=json.dumps(body) if body else None,
-            timeout=timeout,
-            proxies=proxies,
-        )
-        resp.raise_for_status()
+        try:
+            payload = ingest.request(
+                path,
+                method="POST",
+                params=params if params else None,
+                json_body=body if body else None,
+            )
 
-        payload = resp.json()  # list[dict]
+        except TransportError:
+            raise
+
+        except Exception as exc:
+            raise TransportError(
+                str(exc),
+                StatusCode.INGESTION_FETCH_FAILED,
+            ) from exc
 
         for obj in payload:
             records.append(
@@ -108,6 +114,9 @@ def fetch_company_products_post(
         offset = int(offset) + int(limit)
 
     logging.info(
-        f"Total POST company products fetched for company {company_guid}: {len(records)}"
+        "Total POST company products fetched for company %s: %d",
+        company_guid,
+        len(records),
     )
+
     return records
