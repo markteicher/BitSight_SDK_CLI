@@ -2,339 +2,219 @@
 """
 exit_codes.py
 
-AUTHORITATIVE EXIT CODE CONTRACT FOR BitSight SDK + CLI
+Defines the ONLY process exit codes allowed for BitSight SDK + CLI.
 
-This file defines the ONLY exit codes allowed to leave the process boundary.
-Every other module (cli.py, core/ingestion.py, db/*, ingest/*) MUST map
-internal outcomes to one of these codes.
-
-No module is allowed to call sys.exit(<int>) with an undocumented value.
-
-Exit codes are FINAL SIGNALS to:
-- operators
-- schedulers
-- orchestration systems
-- SIEM / SOAR
-- automation frameworks
-
-Each exit code below documents:
-- EXACT condition that triggers it
-- WHICH layer emits it
-- WHETHER execution stops immediately
+Rules:
+- Exactly one exit code is returned per CLI invocation.
+- cli.py MUST return one of these codes via sys.exit(int(code)).
+- core/ingestion.py MUST map execution outcomes to one of these codes.
+- No other module should call sys.exit() directly.
 """
 
 from enum import IntEnum
 
 
 class ExitCode(IntEnum):
-    """
-    ExitCode enumeration.
-
-    All exit codes are unique, stable, and non-overlapping.
-    Renumbering is forbidden once published.
-    """
-
-    # ------------------------------------------------------------------
-    # 0 — SUCCESS
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 0–9: SUCCESS / NON-ERROR TERMINATION
+    # ============================================================
 
     SUCCESS = 0
+    """WHEN: command completes and all required operations succeed."""
+
+    SUCCESS_NOOP = 1
     """
-    WHEN:
-        - All requested operations completed successfully
-        - No fatal errors occurred
-        - All mandatory data was processed
-    SET BY:
-        - core.ingestion.ExecutionSummary.finalize()
-        - cli.py after successful handler completion
-    EFFECT:
-        - Process exits normally
-        - No retries required
+    WHEN: command completes successfully but performs no work by design.
+    Example: `show` command returns empty set but that is not an error.
     """
 
-    # ------------------------------------------------------------------
-    # 10–19 — CLI / OPERATOR ERRORS (INPUT & INVOCATION)
-    # ------------------------------------------------------------------
+    SUCCESS_EMPTY = 2
+    """
+    WHEN: ingest completes successfully, API reachable, but zero results returned.
+    This is not a failure; it is an observed empty dataset.
+    """
+
+    SUCCESS_ALREADY_INITIALIZED = 3
+    """
+    WHEN: requested init/setup action finds system already initialized.
+    Example: db schema already present and matches expected objects.
+    """
+
+    # ============================================================
+    # 10–19: CLI ARGUMENTS / COMMAND DISPATCH
+    # ============================================================
 
     INVALID_ARGUMENTS = 10
     """
-    WHEN:
-        - argparse fails validation
-        - Required arguments are missing
-        - Mutually exclusive options are combined incorrectly
-    SET BY:
-        - cli.py only
-    EFFECT:
-        - Execution stops immediately
-        - No ingestion or DB work is started
+    WHEN: argparse rejects the command line (missing required args, bad types,
+          mutually-exclusive args, invalid choices).
+    STOP: immediately (no network/db work).
     """
 
-    CONFIG_NOT_INITIALIZED = 11
+    UNKNOWN_COMMAND = 11
     """
-    WHEN:
-        - User runs a command that requires configuration
-        - No config file exists or config is incomplete
-    SET BY:
-        - cli.py
-        - config loader
-    EFFECT:
-        - Execution stops before any network or DB activity
+    WHEN: top-level command is not recognized by dispatch.
+    STOP: immediately.
     """
 
-    CONFIG_INVALID = 12
+    UNKNOWN_SUBCOMMAND = 12
     """
-    WHEN:
-        - Config file exists but contains invalid values
-        - Examples: malformed URL, missing API key, invalid timeout
-    SET BY:
-        - config validation logic
-    EFFECT:
-        - Execution stops immediately
+    WHEN: subcommand is not recognized by dispatch.
+    STOP: immediately.
     """
 
-    UNSUPPORTED_COMMAND = 13
+    COMMAND_NOT_WIRED = 13
     """
-    WHEN:
-        - CLI command is recognized syntactically
-        - But no execution handler exists
-    SET BY:
-        - cli.py dispatch layer
-    EFFECT:
-        - Execution stops immediately
+    WHEN: command exists in CLI taxonomy but dispatch handler is missing.
+    STOP: immediately.
     """
 
-    # ------------------------------------------------------------------
-    # 20–29 — AUTHENTICATION & AUTHORIZATION
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 20–29: CONFIGURATION STATE / VALIDATION
+    # ============================================================
 
-    AUTHENTICATION_FAILED = 20
+    CONFIG_NOT_FOUND = 20
     """
-    WHEN:
-        - BitSight API returns 401
-        - API key is missing, revoked, or invalid
-    SET BY:
-        - HTTP client layer
-        - core.ingestion
-    EFFECT:
-        - Execution stops
-        - No retry without operator intervention
+    WHEN: command requires config but config file does not exist.
+    STOP: immediately.
     """
 
-    AUTHORIZATION_FAILED = 21
+    CONFIG_INVALID = 21
     """
-    WHEN:
-        - BitSight API returns 403
-        - API key is valid but lacks permissions
-    SET BY:
-        - HTTP client layer
-    EFFECT:
-        - Execution stops
-        - Operator must adjust entitlements
+    WHEN: config exists but fails validation (malformed base_url, missing api_key,
+          invalid timeout, invalid proxy settings, etc.).
+    STOP: immediately.
     """
 
-    LICENSE_EXHAUSTED = 22
+    CONFIG_PERMISSION_DENIED = 22
     """
-    WHEN:
-        - BitSight API indicates license quota exceeded
-        - Example: current ratings license exhausted
-    SET BY:
-        - core.ingestion
-    EFFECT:
-        - Execution stops
-        - Retry only after license reset
+    WHEN: config file exists but cannot be read/written due to OS permissions.
+    STOP: immediately.
     """
 
-    # ------------------------------------------------------------------
-    # 30–39 — NETWORK & TRANSPORT
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 30–39: AUTHN / AUTHZ / ENTITLEMENTS
+    # ============================================================
 
-    NETWORK_FAILURE = 30
+    AUTHENTICATION_FAILED = 30
     """
-    WHEN:
-        - DNS failure
-        - TCP connection failure
-        - TLS negotiation failure
-    SET BY:
-        - HTTP client layer
-    EFFECT:
-        - Execution stops
-        - Safe to retry
+    WHEN: BitSight returns 401 or equivalent auth failure.
+    STOP: immediately (retry requires corrected credentials).
     """
 
-    TIMEOUT = 31
+    AUTHORIZATION_FAILED = 31
     """
-    WHEN:
-        - HTTP request exceeds configured timeout
-    SET BY:
-        - HTTP client layer
-    EFFECT:
-        - Execution stops
-        - Retry permitted
+    WHEN: BitSight returns 403 or equivalent permission denial.
+    STOP: immediately (retry requires entitlement/role change).
     """
 
-    RATE_LIMITED = 32
+    LICENSE_REQUIRED_OR_EXHAUSTED = 32
     """
-    WHEN:
-        - BitSight API returns 429
-    SET BY:
-        - core.ingestion
-    EFFECT:
-        - Execution stops
-        - Retry after backoff window
+    WHEN: BitSight indicates license required/exhausted for the endpoint.
+    STOP: immediately (retry requires license/entitlement change).
     """
 
-    # ------------------------------------------------------------------
-    # 40–49 — DATA & API SEMANTICS
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 40–49: NETWORK / TRANSPORT
+    # ============================================================
 
-    API_CONTRACT_VIOLATION = 40
+    NETWORK_ERROR = 40
     """
-    WHEN:
-        - API response does not match documented schema
-        - Required fields are missing or malformed
-    SET BY:
-        - Response normalization layer
-    EFFECT:
-        - Execution stops
-        - Indicates upstream API change
+    WHEN: DNS/connect/TLS failure prevents API call completion.
+    STOP: immediately.
     """
 
-    UNSUPPORTED_API_VERSION = 41
+    TIMEOUT = 41
     """
-    WHEN:
-        - Endpoint version no longer supported
-        - API returns explicit version error
-    SET BY:
-        - core.ingestion
-    EFFECT:
-        - Execution stops
+    WHEN: request times out (connect/read timeout).
+    STOP: immediately.
     """
 
-    # ------------------------------------------------------------------
-    # 50–59 — DATABASE ERRORS
-    # ------------------------------------------------------------------
-
-    DATABASE_CONNECTION_FAILED = 50
+    RATE_LIMITED = 42
     """
-    WHEN:
-        - Cannot connect to database
-        - Invalid credentials
-        - Network failure to DB
-    SET BY:
-        - db.mssql
-    EFFECT:
-        - Execution stops
+    WHEN: API returns 429 (rate limited) or equivalent throttling response.
+    STOP: immediately (retry after backoff).
     """
 
-    DATABASE_SCHEMA_ERROR = 51
+    # ============================================================
+    # 50–59: API RESPONSE / CONTRACT / DATA SHAPE
+    # ============================================================
+
+    API_ERROR = 50
     """
-    WHEN:
-        - Required table does not exist
-        - Column mismatch
-        - Migration not applied
-    SET BY:
-        - db layer
-    EFFECT:
-        - Execution stops
+    WHEN: API returns non-2xx that is not auth/rate-limit (e.g., 5xx, 404, 400).
+    STOP: immediately unless ingestion controller explicitly tolerates it.
     """
 
-    DATABASE_WRITE_FAILED = 52
+    API_CONTRACT_ERROR = 51
     """
-    WHEN:
-        - INSERT / UPDATE fails
-        - Constraint violation
-        - Deadlock
-    SET BY:
-        - db layer
-    EFFECT:
-        - Execution stops
-        - Partial ingestion possible
+    WHEN: API returns 2xx but payload is missing required keys or has an
+          incompatible shape for the expected endpoint.
+    STOP: immediately (treat as upstream change or parser bug).
     """
 
-    # ------------------------------------------------------------------
-    # 60–69 — INGESTION EXECUTION STATES
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 60–69: DATABASE CONNECTIVITY / SCHEMA / WRITE
+    # ============================================================
 
-    NO_DATA_RETURNED = 60
+    DB_CONNECTION_FAILED = 60
     """
-    WHEN:
-        - API call succeeds
-        - But zero records are returned
-    SET BY:
-        - core.ingestion
-    EFFECT:
-        - Execution completes normally
-        - Used to signal empty result sets
+    WHEN: cannot connect/authenticate to DB.
+    STOP: immediately.
     """
 
-    PARTIAL_SUCCESS = 61
+    DB_SCHEMA_FAILED = 61
     """
-    WHEN:
-        - Some records processed successfully
-        - Some records failed
-    SET BY:
-        - core.ingestion.ExecutionSummary
-    EFFECT:
-        - Execution completes
-        - Operator must inspect error counts
+    WHEN: schema init/migration fails OR required tables/columns are missing.
+    STOP: immediately.
     """
 
-    INGESTION_ABORTED = 62
+    DB_WRITE_FAILED = 62
     """
-    WHEN:
-        - Fatal error occurs mid-ingestion
-        - Continuation would corrupt state
-    SET BY:
-        - core.ingestion
-    EFFECT:
-        - Execution stops immediately
+    WHEN: insert/update fails in a way that prevents safe continuation
+          (constraint violations, deadlock not recovered, transaction failure).
+    STOP: immediately unless ingestion controller supports partial continuation.
     """
 
-    # ------------------------------------------------------------------
-    # 70–79 — INTERNAL SYSTEM ERRORS
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 70–79: INGEST EXECUTION OUTCOME (AGGREGATED)
+    # ============================================================
 
-    INTERNAL_ERROR = 70
+    INGEST_PARTIAL_SUCCESS = 70
     """
-    WHEN:
-        - Unhandled exception escapes ingestion logic
-    SET BY:
-        - Top-level exception handler
-    EFFECT:
-        - Execution stops
-        - Indicates bug
+    WHEN: ingestion ran and produced some successful writes, but also recorded
+          one or more record-level or page-level failures.
+    STOP: command completes, returns this code.
     """
 
-    NOT_IMPLEMENTED = 71
+    INGEST_FAILED = 71
     """
-    WHEN:
-        - Code path exists but logic is intentionally missing
-    SET BY:
-        - Any layer
-    EFFECT:
-        - Execution stops
+    WHEN: ingestion could not complete required work due to fatal errors.
+    STOP: immediately or after controlled shutdown.
     """
 
-    # ------------------------------------------------------------------
-    # 90–99 — OPERATOR-INITIATED TERMINATION
-    # ------------------------------------------------------------------
+    # ============================================================
+    # 80–89: INTERNAL FAILURES
+    # ============================================================
+
+    INTERNAL_ERROR = 80
+    """
+    WHEN: unhandled exception escapes to top-level handler.
+    STOP: immediately.
+    """
+
+    NOT_IMPLEMENTED = 81
+    """
+    WHEN: code path exists but is intentionally not implemented.
+    STOP: immediately.
+    """
+
+    # ============================================================
+    # 90–99: OPERATOR TERMINATION
+    # ============================================================
 
     OPERATOR_ABORT = 90
     """
-    WHEN:
-        - User interrupts execution (Ctrl-C / SIGINT)
-    SET BY:
-        - Signal handler
-    EFFECT:
-        - Execution stops cleanly
-    """
-
-    CONFIG_RESET = 91
-    """
-    WHEN:
-        - Operator explicitly resets configuration
-    SET BY:
-        - config command
-    EFFECT:
-        - Execution ends after reset
+    WHEN: user interrupts execution (SIGINT/Ctrl-C).
+    STOP: immediately or controlled shutdown.
     """
