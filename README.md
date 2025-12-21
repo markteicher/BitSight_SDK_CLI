@@ -1,6 +1,10 @@
 # 🛡️ BitSight SDK + CLI
 
-A production-oriented SDK + CLI for pulling BitSight API data and writing it into **Microsoft SQL Server (MSSQL)** using a **1:1 physical table representation** of BitSight endpoints.
+A Software Developer's Kit and Command Line Interpreter interfacd for  Bitsight Security Ratings. 
+
+BitSight Security Ratings allows for monitoring security ratings, portfolio companies, alerts, findings, exposed credentials, users, and threat intelligence.
+
+This application is built to export data via the extensive BitSight API for  writing it into **Microsoft SQL Server (MSSQL)** using a **1:1 physical table representation** of BitSight endpoints.
 
 ---
 
