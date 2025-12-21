@@ -10,6 +10,7 @@ Security Ratings: Assigns objective, data-backed scores (from 250-900) to organi
 Third-Party Risk Management (TPRM): Assesses the risk introduced by vendors, clients, and partners, helping companies manage supply chain vulnerabilities.
 
 Attack Surface Management: Maps and monitors an organization's entire digital footprint to find exposures.
+
 Benchmarking: Allows companies to compare their security performance against peers and industry standards.
 
 Risk Quantification: Provides data to help understand the financial impact of cyber risk. 
