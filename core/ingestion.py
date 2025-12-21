@@ -93,9 +93,9 @@ class IngestionExecutor:
             if written == 0 and failed > 0:
                 return self._finish(
                     StatusCode.INGESTION_WRITE_FAILED,
-                    ExitCode.INGEST_ZERO_RECORDS,
+                    ExitCode.INGEST_WRITE_FAILED,
                     fetched=fetched_count,
-                    written=written,
+                    written=0,
                     failed=failed,
                     start_time=start_time,
                 )
@@ -121,8 +121,8 @@ class IngestionExecutor:
 
         except KeyboardInterrupt:
             return self._finish(
-                StatusCode.INGESTION_INTERRUPTED,
-                ExitCode.RUNTIME_INTERRUPT,
+                StatusCode.OK_SKIPPED,
+                ExitCode.SUCCESS_OPERATOR_EXIT,
                 start_time=start_time,
             )
 
@@ -141,8 +141,8 @@ class IngestionExecutor:
     def _fetch(self) -> list:
         records = self.fetcher()
 
-        if not isinstance(records, Iterable):
-            raise TypeError("Fetcher did not return iterable")
+        if isinstance(records, (str, bytes, dict)) or not isinstance(records, Iterable):
+            raise TypeError("Fetcher must return an iterable of records")
 
         records = list(records)
 
