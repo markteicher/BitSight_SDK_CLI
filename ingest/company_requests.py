@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 
 import logging
-import requests
 from datetime import datetime
-from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
+from typing import Dict, Any, List
 
-# BitSight Company Requests endpoint
+from core.status_codes import StatusCode
+from core.transport import TransportError
+from ingest.base import BitSightIngestBase
+
+
 BITSIGHT_COMPANY_REQUESTS_ENDPOINT = "/ratings/v1/company-requests"
 
 
 def fetch_company_requests(
-    session: requests.Session,
-    base_url: str,
-    api_key: str,
-    timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
+    ingest: BitSightIngestBase,
 ) -> List[Dict[str, Any]]:
     """
     Fetch all company access requests.
@@ -23,42 +21,38 @@ def fetch_company_requests(
     Endpoint:
         GET /ratings/v1/company-requests
 
-    Deterministic pagination using links.next.
-
-    Auth:
-        HTTP Basic Auth using api_key as username and blank password.
+    Deterministic pagination via limit/offset and links.next.
     """
 
-    if base_url.endswith("/"):
-        base_url = base_url[:-1]
-
-    url = f"{base_url}{BITSIGHT_COMPANY_REQUESTS_ENDPOINT}"
-    headers = {"Accept": "application/json"}
+    ingested_at = datetime.utcnow()
+    path = BITSIGHT_COMPANY_REQUESTS_ENDPOINT
 
     records: List[Dict[str, Any]] = []
-    ingested_at = datetime.utcnow()
 
     limit = 100
     offset = 0
 
     while True:
         params = {"limit": limit, "offset": offset}
+
         logging.info(
-            f"Fetching company requests: {url} "
-            f"(limit={limit}, offset={offset})"
+            "Fetching company requests (limit=%d, offset=%d)",
+            limit,
+            offset,
         )
 
-        resp = session.get(
-            url,
-            headers=headers,
-            auth=(api_key, ""),
-            params=params,
-            timeout=timeout,
-            proxies=proxies,
-        )
-        resp.raise_for_status()
+        try:
+            payload = ingest.request(path, params=params)
 
-        payload = resp.json()
+        except TransportError:
+            raise
+
+        except Exception as exc:
+            raise TransportError(
+                str(exc),
+                StatusCode.INGESTION_FETCH_FAILED,
+            ) from exc
+
         results = payload.get("results", [])
 
         for obj in results:
@@ -73,21 +67,14 @@ def fetch_company_requests(
         links = payload.get("links") or {}
         next_link = links.get("next")
 
-        if next_link:
-            url = _absolutize_next(url, next_link)
-            offset += limit
-            continue
-
-        if len(results) < limit:
+        if not next_link:
             break
 
         offset += limit
 
-    logging.info(f"Total company requests fetched: {len(records)}")
+    logging.info(
+        "Total company requests fetched: %d",
+        len(records),
+    )
+
     return records
-
-
-def _absolutize_next(current_url: str, next_link: str) -> str:
-    if next_link.startswith("http://") or next_link.startswith("https://"):
-        return next_link
-    return urljoin(current_url, next_link)
