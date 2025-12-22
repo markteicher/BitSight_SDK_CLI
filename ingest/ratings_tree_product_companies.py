@@ -44,7 +44,7 @@ def fetch_ratings_tree_product_companies(
         params = {"limit": limit, "offset": offset}
 
         logging.info(
-            f"Fetching ratings tree product companies for product {product_guid}: "
+            f"Fetching ratings tree product companies for product {product_guid}: {url} "
             f"(limit={limit}, offset={offset})"
         )
 
@@ -62,16 +62,18 @@ def fetch_ratings_tree_product_companies(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append({
-                "product_guid": product_guid,
-                "company_guid": obj.get("company_guid"),
-                "company_name": obj.get("company_name"),
-                "domain_count": obj.get("domain_count"),
-                "percent_dependent": obj.get("percent_dependent"),
-                "relationship_source": obj.get("relationship_source"),
-                "ingested_at": ingested_at,
-                "raw_payload": obj,
-            })
+            records.append(
+                {
+                    "product_guid": product_guid,
+                    "company_guid": obj.get("company_guid"),
+                    "company_name": obj.get("company_name"),
+                    "domain_count": obj.get("domain_count"),
+                    "percent_dependent": obj.get("percent_dependent"),
+                    "relationship_source": obj.get("relationship_source"),
+                    "ingested_at": ingested_at,
+                    "raw_payload": obj,
+                }
+            )
 
         links = payload.get("links") or {}
         next_link = links.get("next")
