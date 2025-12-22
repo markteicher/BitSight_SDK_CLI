@@ -19,10 +19,14 @@ def fetch_threat_statistics(
 ) -> Dict[str, Any]:
     """
     Fetch BitSight threat statistics (summaries).
-    Endpoint: GET /ratings/v2/threats/summaries
 
-    This endpoint returns aggregated metrics and is typically non-paginated.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+    Endpoint:
+        GET /ratings/v2/threats/summaries
+
+    This endpoint returns aggregated metrics and is non-paginated.
+
+    Auth:
+        HTTP Basic Auth using api_key as username and blank password.
     """
 
     if base_url.endswith("/"):
@@ -45,7 +49,10 @@ def fetch_threat_statistics(
 
     payload = resp.json()
 
-    return {
+    record = {
+        "scope": "global",
         "ingested_at": ingested_at,
         "raw_payload": payload,
     }
+
+    return record
