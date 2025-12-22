@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
+"""
+core/database_interface.py
+
+Database contract for BitSight SDK + CLI.
+
+Design goals (combat/resilient):
+- Deterministic behavior across backends
+- Clear transaction semantics
+- Consistent error signaling (implementations may raise runtime errors mapped to StatusCode/ExitCode)
+"""
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Tuple, Any, Optional
+from typing import Any, Iterable, Optional, Tuple
 
 
 class DatabaseInterface(ABC):
     """
-    Database contract for BitSight SDK + CLI.
-
     Any supported database backend MUST implement this interface.
-    The CLI, ingestion engine, and db tooling rely exclusively on
-    these methods.
+    The CLI, ingestion engine, and db tooling rely exclusively on these methods.
     """
 
     # ------------------------------------------------------------
@@ -18,30 +25,30 @@ class DatabaseInterface(ABC):
     # ------------------------------------------------------------
     @abstractmethod
     def connect(self) -> None:
-        """
-        Establish a database connection.
-        """
+        """Establish a database connection."""
         raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
-        """
-        Close the database connection.
-        """
+        """Close the database connection."""
         raise NotImplementedError
 
     # ------------------------------------------------------------
     # Health and capability
     # ------------------------------------------------------------
     @abstractmethod
-    def ping(self) -> bool:
+    def ping(self) -> None:
         """
-        Return True if the database is reachable.
+        Validate the database connection.
+
+        Contract:
+        - MUST raise an exception on failure (deterministic failure signaling).
+        - MUST return None on success.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def table_exists(self, table_name: str) -> bool:
+    def table_exists(self, table: str, schema: str = "dbo") -> bool:
         """
         Return True if the specified table exists.
         """
@@ -52,23 +59,17 @@ class DatabaseInterface(ABC):
     # ------------------------------------------------------------
     @abstractmethod
     def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
-        """
-        Execute a single SQL statement.
-        """
+        """Execute a single SQL statement."""
         raise NotImplementedError
 
     @abstractmethod
     def executemany(self, sql: str, rows: Iterable[Tuple[Any, ...]]) -> None:
-        """
-        Execute a parameterized SQL statement for multiple rows.
-        """
+        """Execute a parameterized SQL statement for multiple rows."""
         raise NotImplementedError
 
     @abstractmethod
     def scalar(self, sql: str, params: Tuple[Any, ...] = ()) -> Optional[Any]:
-        """
-        Execute a query and return a single scalar value.
-        """
+        """Execute a query and return a single scalar value."""
         raise NotImplementedError
 
     # ------------------------------------------------------------
@@ -76,14 +77,10 @@ class DatabaseInterface(ABC):
     # ------------------------------------------------------------
     @abstractmethod
     def commit(self) -> None:
-        """
-        Commit the current transaction.
-        """
+        """Commit the current transaction."""
         raise NotImplementedError
 
     @abstractmethod
     def rollback(self) -> None:
-        """
-        Roll back the current transaction.
-        """
+        """Roll back the current transaction."""
         raise NotImplementedError
