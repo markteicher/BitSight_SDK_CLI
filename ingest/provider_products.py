@@ -42,8 +42,11 @@ def fetch_provider_products(
         params = {"limit": limit, "offset": offset}
 
         logging.info(
-            f"Fetching products for provider {provider_guid}: "
-            f"{url} (limit={limit}, offset={offset})"
+            "Fetching products for provider %s: %s (limit=%d, offset=%d)",
+            provider_guid,
+            url,
+            limit,
+            offset,
         )
 
         resp = session.get(
@@ -95,8 +98,9 @@ def fetch_provider_products(
         offset += limit
 
     logging.info(
-        f"Total products fetched for provider {provider_guid}: "
-        f"{len(records)}"
+        "Total products fetched for provider %s: %d",
+        provider_guid,
+        len(records),
     )
     return records
 
