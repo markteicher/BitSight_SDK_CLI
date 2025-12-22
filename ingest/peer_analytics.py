@@ -4,7 +4,6 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin
 
 # BitSight Peer Analytics endpoint
 BITSIGHT_PEER_ANALYTICS_ENDPOINT = "/ratings/v1/peer-analytics"
@@ -21,6 +20,10 @@ def fetch_peer_analytics(
 ) -> List[Dict[str, Any]]:
     """
     Fetch peer analytics from BitSight.
+
+    Endpoint:
+        GET /ratings/v1/peer-analytics
+
     This endpoint returns comparative analytics versus peers.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
@@ -40,15 +43,17 @@ def fetch_peer_analytics(
     ingested_at = datetime.utcnow()
 
     logging.info(
-        f"Fetching peer analytics "
-        f"(company_guid={company_guid}, industry={industry_slug})"
+        "Fetching peer analytics: %s (company_guid=%s, industry=%s)",
+        url,
+        company_guid,
+        industry_slug,
     )
 
     resp = session.get(
         url,
         headers=headers,
         auth=(api_key, ""),
-        params=params,
+        params=params if params else None,
         timeout=timeout,
         proxies=proxies,
     )
@@ -60,12 +65,14 @@ def fetch_peer_analytics(
     records: List[Dict[str, Any]] = []
 
     for obj in results:
-        records.append({
-            "company_guid": company_guid,
-            "industry_slug": industry_slug,
-            "ingested_at": ingested_at,
-            "raw_payload": obj,
-        })
+        records.append(
+            {
+                "company_guid": company_guid,
+                "industry_slug": industry_slug,
+                "ingested_at": ingested_at,
+                "raw_payload": obj,
+            }
+        )
 
-    logging.info(f"Peer analytics records fetched: {len(records)}")
+    logging.info("Total peer analytics records fetched: %d", len(records))
     return records
