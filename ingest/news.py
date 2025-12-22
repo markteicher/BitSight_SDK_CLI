@@ -19,6 +19,10 @@ def fetch_news(
 ) -> List[Dict[str, Any]]:
     """
     Fetch BitSight news items.
+
+    Endpoint:
+        GET /ratings/v1/news
+
     Deterministic pagination using links.next when present.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
@@ -37,7 +41,12 @@ def fetch_news(
 
     while True:
         params = {"limit": limit, "offset": offset}
-        logging.info(f"Fetching news: {url} (limit={limit}, offset={offset})")
+        logging.info(
+            "Fetching news: %s (limit=%d, offset=%d)",
+            url,
+            limit,
+            offset,
+        )
 
         resp = session.get(
             url,
@@ -68,11 +77,14 @@ def fetch_news(
 
         offset += limit
 
-    logging.info(f"Total news items fetched: {len(records)}")
+    logging.info("Total news items fetched: %d", len(records))
     return records
 
 
-def _normalize_news(obj: Dict[str, Any], ingested_at: datetime) -> Dict[str, Any]:
+def _normalize_news(
+    obj: Dict[str, Any],
+    ingested_at: datetime,
+) -> Dict[str, Any]:
     """
     Map news object into dbo.bitsight_news schema.
     """
