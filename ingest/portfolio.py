@@ -37,7 +37,12 @@ def fetch_portfolio(
 
     while True:
         params = {"limit": limit, "offset": offset}
-        logging.info(f"Fetching portfolio: {url} (limit={limit}, offset={offset})")
+        logging.info(
+            "Fetching portfolio: %s (limit=%d, offset=%d)",
+            url,
+            limit,
+            offset,
+        )
 
         resp = session.get(
             url,
@@ -68,7 +73,7 @@ def fetch_portfolio(
 
         offset += limit
 
-    logging.info(f"Total portfolio records fetched: {len(records)}")
+    logging.info("Total portfolio records fetched: %d", len(records))
     return records
 
 
@@ -76,23 +81,34 @@ def _normalize_portfolio_record(obj: Dict[str, Any], ingested_at: datetime) -> D
     """
     Map portfolio object into dbo.bitsight_portfolio schema.
     """
+
     company = obj.get("company") or {}
     rating = obj.get("rating") or {}
 
-    subscription = obj.get("subscription_type") or {}
-    lifecycle = obj.get("life_cycle") or {}
+    tier = obj.get("tier") or {}
+    relationship = obj.get("relationship") or {}
+
+    subscription_type = obj.get("subscription_type")
+    life_cycle = obj.get("life_cycle")
+
+    # Some tenants return objects, some return strings/null. Handle both.
+    subscription_type_name = subscription_type.get("name") if isinstance(subscription_type, dict) else subscription_type
+    subscription_type_slug = subscription_type.get("slug") if isinstance(subscription_type, dict) else None
+
+    life_cycle_name = life_cycle.get("name") if isinstance(life_cycle, dict) else life_cycle
+    life_cycle_slug = life_cycle.get("slug") if isinstance(life_cycle, dict) else None
 
     return {
         "company_guid": company.get("guid"),
         "name": company.get("name"),
         "rating": rating.get("rating"),
         "rating_date": rating.get("rating_date"),
-        "tier_name": (obj.get("tier") or {}).get("name"),
-        "relationship_name": (obj.get("relationship") or {}).get("name"),
-        "subscription_type_name": subscription.get("name"),
-        "subscription_type_slug": subscription.get("slug"),
-        "life_cycle_name": lifecycle.get("name"),
-        "life_cycle_slug": lifecycle.get("slug"),
+        "tier_name": tier.get("name"),
+        "relationship_name": relationship.get("name"),
+        "subscription_type_name": subscription_type_name,
+        "subscription_type_slug": subscription_type_slug,
+        "life_cycle_name": life_cycle_name,
+        "life_cycle_slug": life_cycle_slug,
         "network_size_v4": obj.get("network_size_v4"),
         "added_date": obj.get("added_date"),
         "ingested_at": ingested_at,
