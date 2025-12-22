@@ -33,17 +33,17 @@ def request_rapid_underwriting_assessment(
         "Content-Type": "application/json",
     }
 
-    payload: Dict[str, Any] = {
-        "company_name": company_name
-    }
+    payload: Dict[str, Any] = {"company_name": company_name}
     if domain:
         payload["domain"] = domain
 
     requested_at = datetime.utcnow()
 
     logging.info(
-        f"Requesting Rapid Underwriting Assessment "
-        f"(company_name={company_name}, domain={domain})"
+        "Requesting Rapid Underwriting Assessment "
+        "(company_name=%s, domain=%s)",
+        company_name,
+        domain,
     )
 
     resp = session.post(
