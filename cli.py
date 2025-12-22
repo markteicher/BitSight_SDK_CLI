@@ -6,7 +6,7 @@ import logging
 import sys
 from typing import Optional, Dict
 
-from tqdm import tqdm  # progress enabled unless --no-progress
+from tqdm import tqdm
 
 
 # ----------------------------------------------------------------------
@@ -27,7 +27,10 @@ def setup_logging(verbose: bool) -> None:
 def build_proxies(args: argparse.Namespace) -> Optional[Dict[str, str]]:
     if not args.proxy_url:
         return None
-    return {"http": args.proxy_url, "https": args.proxy_url}
+    return {
+        "http": args.proxy_url,
+        "https": args.proxy_url,
+    }
 
 
 def exit_cli() -> None:
@@ -55,12 +58,14 @@ def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
         logging.error("Missing ingest module: %s.py", module_name)
         sys.exit(1)
 
+    # function-style entrypoints
     for entry in ("main", "run", "cli"):
         fn = getattr(module, entry, None)
         if callable(fn):
             fn(args)
             return
 
+    # class-style entrypoints
     for attr in dir(module):
         if attr.endswith("Ingest"):
             cls = getattr(module, attr)
@@ -70,7 +75,9 @@ def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
                     obj.run()
                     return
 
-    logging.error("No valid entrypoint found in ingest module: %s", module_name)
+    logging.error(
+        "No valid entrypoint found in ingest module: %s", module_name
+    )
     sys.exit(1)
 
 
@@ -93,17 +100,17 @@ def main() -> None:
     )
 
     # global options
-    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    parser.add_argument("--no-progress", action="store_true", help="Disable progress bars")
-    parser.add_argument("--api-key", help="BitSight API token")
-    parser.add_argument("--base-url", help="BitSight API base URL")
-    parser.add_argument("--proxy-url", help="Proxy URL")
-    parser.add_argument("--timeout", type=int, help="HTTP timeout seconds")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--api-key")
+    parser.add_argument("--base-url")
+    parser.add_argument("--proxy-url")
+    parser.add_argument("--timeout", type=int)
 
     subparsers = parser.add_subparsers(dest="command")
 
     # ------------------------------------------------------------------
-    # exit / quit
+    # exit aliases
     # ------------------------------------------------------------------
     subparsers.add_parser("exit")
     subparsers.add_parser("quit")
@@ -131,7 +138,7 @@ def main() -> None:
     config_set.add_argument("--timeout", type=int)
 
     # ------------------------------------------------------------------
-    # db (MSSQL only)
+    # db
     # ------------------------------------------------------------------
     db = subparsers.add_parser("db")
     db_sub = db.add_subparsers(dest="subcommand", required=True)
@@ -164,4 +171,80 @@ def main() -> None:
             for argspec in extra:
                 p.add_argument(*argspec[0], **argspec[1])
         p.add_argument("--flush", action="store_true")
+        return p
+
+    # users
+    ingest_cmd("users")
+    ingest_cmd("user-details", [
+        (["--user-guid"], {"required": True})
+    ])
+
+    # existing ingest commands (unchanged)
+    ingest_cmd("user-quota")
+    ingest_cmd("user-company-views")
+
+    ingest_cmd("companies")
+    ingest_cmd("company-details", [(["--company-guid"], {"required": True})])
+
+    ingest_cmd("portfolio")
+    ingest_cmd("current-ratings")
+    ingest_cmd("current-ratings-v2")
+
+    ingest_cmd("ratings-history", [
+        (["--company-guid"], {"required": True}),
+    ])
+
+    ingest_cmd("findings", [
+        (["--company-guid"], {"required": True}),
+    ])
+
+    ingest_cmd("observations", [
+        (["--company-guid"], {"required": True}),
+    ])
+
+    ingest_cmd("threats")
+    ingest_cmd("threat-statistics")
+    ingest_cmd("threats-impact", [
+        (["--threat-guid"], {"required": True}),
+    ])
+    ingest_cmd("threats-evidence", [
+        (["--threat-guid"], {"required": True}),
+        (["--entity-guid"], {"required": True}),
+    ])
+
+    # ------------------------------------------------------------------
+    # help
+    # ------------------------------------------------------------------
+    subparsers.add_parser("help")
+
+    # ------------------------------------------------------------------
+    # parse + dispatch
+    # ------------------------------------------------------------------
+    args = parser.parse_args()
+    setup_logging(args.verbose)
+
+    if args.command in ("exit", "quit", "x", "q"):
+        exit_cli()
+
+    if args.command in (None, "help"):
+        parser.print_help()
         return
+
+    if args.command == "ingest":
+        dispatch_ingest(args.subcommand, args)
+        return
+
+    if args.command == "db":
+        logging.info("db command selected: %s", args.subcommand)
+        return
+
+    if args.command == "config":
+        logging.info("config command selected: %s", args.subcommand)
+        return
+
+    logging.error("Unhandled command")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
