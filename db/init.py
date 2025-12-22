@@ -8,16 +8,6 @@ from db.mssql import MSSQLDatabase
 
 
 class MSSQLInitializer:
-    """
-    Resilient schema initializer.
-
-    Design goals:
-      - Re-runnable: schema file is deployment-guarded (IF OBJECT_ID... IS NULL)
-      - Transaction-safe: all-or-nothing apply, rollback on failure
-      - Robust statement splitting: supports IF/BEGIN/END blocks and index guards
-      - Operator-visible logging: shows which statement failed (without dumping secrets)
-    """
-
     def __init__(
         self,
         server: str,
@@ -42,28 +32,26 @@ class MSSQLInitializer:
     # Public
     # ------------------------------------------------------------
     def run(self) -> None:
-        logging.info("DB_INIT Starting MSSQL schema initialization")
+        logging.info("Initializing BitSight MSSQL schema | file=%s", self.schema_path)
         statements = self._load_schema_statements()
-        logging.info("DB_INIT Loaded %d executable statements", len(statements))
 
         try:
             for i, stmt in enumerate(statements, start=1):
-                preview = self._preview(stmt)
-                logging.info("DB_INIT Executing [%d/%d] %s", i, len(statements), preview)
+                stmt = stmt.strip()
+                if not stmt:
+                    continue
+
+                preview = stmt.replace("\n", " ")[:180]
+                logging.info("Schema apply | stmt=%d/%d | preview=%s", i, len(statements), preview)
+
                 self.db.execute(stmt)
 
             self.db.commit()
-            logging.info("DB_INIT MSSQL schema initialized successfully")
+            logging.info("MSSQL schema initialized successfully | statements=%d", len(statements))
 
-        except Exception as e:
-            # Always rollback for combat-grade behavior
-            try:
-                self.db.rollback()
-            except Exception:
-                logging.exception("DB_INIT Rollback failed")
-                raise
-
-            logging.exception("DB_INIT Schema initialization failed: %s", e)
+        except Exception:
+            self.db.rollback()
+            logging.exception("MSSQL schema initialization failed — transaction rolled back")
             raise
 
         finally:
@@ -74,66 +62,65 @@ class MSSQLInitializer:
     # ------------------------------------------------------------
     def _load_schema_statements(self) -> List[str]:
         """
-        Split schema file into executable SQL statements.
+        Split schema file into executable MSSQL statements.
 
-        IMPORTANT:
-        - We cannot split purely on semicolons because guarded blocks
-          (IF ... BEGIN ... END) contain internal semicolons.
-        - We split on semicolons ONLY at depth==0 (outside BEGIN/END blocks).
+        Contract:
+        - Schema file must terminate executable units with semicolons.
+        - Comments (single-line and block) are preserved but do not control splitting.
         """
         raw_sql = self.schema_path.read_text(encoding="utf-8")
 
-        # Normalize and strip BOM
-        raw_sql = raw_sql.replace("\ufeff", "").replace("\r\n", "\n").strip()
+        # Normalize line endings and strip BOMs
+        raw_sql = raw_sql.replace("\ufeff", "")
+        raw_sql = raw_sql.replace("\r\n", "\n").replace("\r", "\n")
 
         statements: List[str] = []
         buffer: List[str] = []
-        depth = 0  # BEGIN/END nesting
 
-        for line in raw_sql.split("\n"):
-            stripped = line.strip()
+        in_block_comment = False
 
-            # Always keep comments and blank lines (useful for readability/debug)
-            buffer.append(line)
+        for line in raw_sql.splitlines():
+            raw_line = line
 
-            # Track BEGIN/END nesting conservatively (common in guarded DDL)
-            # We only treat standalone BEGIN/END (or BEGIN/END as first token) as control flow.
-            # This avoids accidental matches inside column names, etc.
-            first_token = stripped.split(None, 1)[0].upper() if stripped else ""
+            # Track block comments so we don't accidentally treat internal lines as code boundaries
+            stripped = raw_line.strip()
 
-            if first_token == "BEGIN":
-                depth += 1
-            elif first_token == "END":
-                # END may appear as "END;" on same line
-                if depth > 0:
-                    depth -= 1
+            if in_block_comment:
+                buffer.append(raw_line)
+                if "*/" in stripped:
+                    in_block_comment = False
+                continue
 
-            # Split only when we hit a statement terminator at top-level
-            if depth == 0 and stripped.endswith(";"):
-                stmt = "\n".join(buffer).strip()
-                # remove the final semicolon (pyodbc is fine either way, but keep deterministic)
-                if stmt.endswith(";"):
-                    stmt = stmt[:-1].rstrip()
-                if stmt:
-                    statements.append(stmt)
+            if stripped.startswith("/*"):
+                buffer.append(raw_line)
+                if "*/" not in stripped:
+                    in_block_comment = True
+                continue
+
+            # Single-line comment: keep it with surrounding context for operator readability
+            if stripped.startswith("--"):
+                buffer.append(raw_line)
+                continue
+
+            buffer.append(raw_line)
+
+            # Statement boundary: line ends with semicolon (common in guarded DDL blocks: END;)
+            if stripped.endswith(";"):
+                statement = "\n".join(buffer).strip()
+
+                # Drop trailing semicolon for pyodbc execute() safety/consistency
+                if statement.endswith(";"):
+                    statement = statement[:-1].rstrip()
+
+                if statement:
+                    statements.append(statement)
+
                 buffer.clear()
 
-        # Trailing statement without semicolon (still execute it)
+        # Trailing fragment: only add if it contains something meaningful
         trailing = "\n".join(buffer).strip()
         if trailing:
             statements.append(trailing)
 
+        logging.info("Loaded schema statements | count=%d", len(statements))
         return statements
-
-    @staticmethod
-    def _preview(sql: str, max_len: int = 140) -> str:
-        """
-        Compact single-line preview for logs.
-        """
-        one_line = " ".join(sql.split())
-        if len(one_line) <= max_len:
-            return one_line
-        return one_line[: max_len - 3] + "..."
-
-
-__all__ = ["MSSQLInitializer"]
