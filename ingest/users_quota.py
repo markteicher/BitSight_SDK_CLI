@@ -3,7 +3,7 @@
 import logging
 import requests
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 # BitSight User Quota endpoint
 BITSIGHT_USER_QUOTA_ENDPOINT = "/ratings/v1/users/quota"
@@ -15,15 +15,17 @@ def fetch_user_quota(
     api_key: str,
     timeout: int = 60,
     proxies: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    Fetch user quota information from BitSight.
+    Fetch user quota summary from BitSight.
 
     Endpoint:
         GET /ratings/v1/users/quota
 
-    This endpoint is non-paginated and returns quota objects keyed by type.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+    This endpoint returns a single, non-paginated summary object describing:
+      - active/inactive user counts
+      - total users
+      - active license quota and remaining capacity
     """
 
     if base_url.endswith("/"):
@@ -34,7 +36,7 @@ def fetch_user_quota(
 
     ingested_at = datetime.utcnow()
 
-    logging.info(f"Fetching user quota: {url}")
+    logging.info(f"Fetching user quota summary: {url}")
 
     resp = session.get(
         url,
@@ -47,19 +49,15 @@ def fetch_user_quota(
 
     payload = resp.json()
 
-    records: List[Dict[str, Any]] = []
+    record = {
+        "active_user_count": payload.get("active_user_count"),
+        "inactive_user_count": payload.get("inactive_user_count"),
+        "total_user_count": payload.get("total_user_count"),
+        "total_active_quota": payload.get("total_active_quota"),
+        "remaining_active_quota": payload.get("remaining_active_quota"),
+        "ingested_at": ingested_at,
+        "raw_payload": payload,
+    }
 
-    for quota_type, values in payload.items():
-        records.append(
-            {
-                "quota_type": quota_type,
-                "total": values.get("total"),
-                "used": values.get("used"),
-                "remaining": values.get("remaining"),
-                "ingested_at": ingested_at,
-                "raw_payload": {quota_type: values},
-            }
-        )
-
-    logging.info(f"User quota types fetched: {len(records)}")
-    return records
+    logging.info("User quota summary fetched successfully")
+    return record
