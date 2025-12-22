@@ -17,8 +17,12 @@ def fetch_static_data(
     proxies: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
-    Fetch static data from BitSight.
-    This endpoint returns reference / lookup datasets.
+    Fetch static reference data from BitSight.
+
+    Endpoint:
+        GET /ratings/v1/static-data
+
+    This endpoint is non-paginated and returns lookup/reference datasets.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
@@ -41,11 +45,7 @@ def fetch_static_data(
     )
     resp.raise_for_status()
 
-    payload = resp.json()
-
-    record = {
+    return {
         "ingested_at": ingested_at,
-        "raw_payload": payload,
+        "raw_payload": resp.json(),
     }
-
-    return record
