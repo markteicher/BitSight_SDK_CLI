@@ -2,6 +2,7 @@
 
 import logging
 import requests
+import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from urllib.parse import urljoin
@@ -23,7 +24,7 @@ def fetch_users(
     Endpoint:
         GET /ratings/v2/users
 
-    Deterministic pagination using links.next when present.
+    Deterministic pagination using links.next.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
@@ -41,7 +42,10 @@ def fetch_users(
 
     while True:
         params = {"limit": limit, "offset": offset}
-        logging.info(f"Fetching users: {url} (limit={limit}, offset={offset})")
+
+        logging.info(
+            f"Fetching users: {url} (limit={limit}, offset={offset})"
+        )
 
         resp = session.get(
             url,
@@ -57,17 +61,28 @@ def fetch_users(
         results = payload.get("results", [])
 
         for user in results:
+            group = user.get("group") or {}
+
             records.append(
                 {
                     "user_guid": user.get("guid"),
                     "friendly_name": user.get("friendly_name"),
                     "formal_name": user.get("formal_name"),
                     "email": user.get("email"),
-                    "status": user.get("status"),
+                    "group_guid": group.get("guid"),
+                    "group_name": group.get("name"),
                     "landing_page": user.get("landing_page"),
-                    "mfa_status": user.get("mfa_status"),
+                    "status": user.get("status"),
                     "last_login_time": user.get("last_login_time"),
                     "joined_time": user.get("joined_time"),
+                    "mfa_status": user.get("mfa_status"),
+                    "is_available_for_contact": user.get("is_available_for_contact"),
+                    "is_company_api_token": user.get("is_company_api_token"),
+                    "roles": json.dumps(user.get("roles")),
+                    "features": json.dumps(user.get("features")),
+                    "preferred_contact_for_entities": json.dumps(
+                        user.get("preferred_contact_for_entities")
+                    ),
                     "ingested_at": ingested_at,
                     "raw_payload": user,
                 }
