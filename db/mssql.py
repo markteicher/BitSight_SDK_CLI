@@ -56,6 +56,19 @@ class MSSQLDatabase(DatabaseInterface):
         self.connect()
 
     # ------------------------------------------------------------
+    # INTERNAL GUARD
+    # ------------------------------------------------------------
+    def _require_connection(self) -> pyodbc.Connection:
+        """
+        Ensures all operations fail deterministically if connect() failed
+        or the connection was closed.
+        """
+        if not self.connection:
+            logging.error("DB_CONNECTION_NOT_INITIALIZED")
+            raise RuntimeError(StatusCode.DB_CONNECTION_FAILED)
+        return self.connection
+
+    # ------------------------------------------------------------
     # CONNECTION / HEALTH
     # ------------------------------------------------------------
     def connect(self) -> None:
@@ -81,10 +94,11 @@ class MSSQLDatabase(DatabaseInterface):
             raise RuntimeError(StatusCode.DB_AUTH_FAILED) from e
 
     def ping(self) -> None:
+        conn = self._require_connection()
         try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
         except Exception as e:
             logging.error("DB_PING_FAILED %s", e)
             raise RuntimeError(StatusCode.DB_CONNECTION_FAILED) from e
@@ -93,9 +107,10 @@ class MSSQLDatabase(DatabaseInterface):
     # EXECUTION
     # ------------------------------------------------------------
     def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
+        conn = self._require_connection()
         try:
-            cursor = self.connection.cursor()
-            cursor.execute(sql, params)
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params)
         except pyodbc.IntegrityError as e:
             logging.error("DB_CONSTRAINT_VIOLATION %s", e)
             raise RuntimeError(StatusCode.DB_CONSTRAINT_VIOLATION) from e
@@ -107,20 +122,27 @@ class MSSQLDatabase(DatabaseInterface):
             raise RuntimeError(StatusCode.DB_INSERT_FAILED) from e
 
     def executemany(self, sql: str, rows: Iterable[Tuple[Any, ...]]) -> None:
+        conn = self._require_connection()
         try:
-            cursor = self.connection.cursor()
-            cursor.fast_executemany = True
-            cursor.executemany(sql, rows)
+            with conn.cursor() as cursor:
+                cursor.fast_executemany = True
+                cursor.executemany(sql, rows)
         except Exception as e:
             logging.error("DB_BATCH_INSERT_FAILED %s", e)
+            # Transaction integrity: do not leave caller in a dirty state.
+            try:
+                conn.rollback()
+            except Exception as rb:
+                logging.critical("DB_ROLLBACK_FAILED %s", rb)
             raise RuntimeError(StatusCode.DB_TRANSACTION_FAILED) from e
 
     def scalar(self, sql: str, params: Tuple[Any, ...] = ()) -> Any:
+        conn = self._require_connection()
         try:
-            cursor = self.connection.cursor()
-            cursor.execute(sql, params)
-            row = cursor.fetchone()
-            return row[0] if row else None
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params)
+                row = cursor.fetchone()
+                return row[0] if row else None
         except Exception as e:
             logging.error("DB_SCALAR_FAILED %s", e)
             raise RuntimeError(StatusCode.DB_QUERY_FAILED) from e
@@ -142,15 +164,17 @@ class MSSQLDatabase(DatabaseInterface):
     # TRANSACTIONS
     # ------------------------------------------------------------
     def commit(self) -> None:
+        conn = self._require_connection()
         try:
-            self.connection.commit()
+            conn.commit()
         except Exception as e:
             logging.error("DB_COMMIT_FAILED %s", e)
             raise RuntimeError(StatusCode.DB_TRANSACTION_FAILED) from e
 
     def rollback(self) -> None:
+        conn = self._require_connection()
         try:
-            self.connection.rollback()
+            conn.rollback()
         except Exception as e:
             logging.critical("DB_ROLLBACK_FAILED %s", e)
             raise RuntimeError(StatusCode.DB_TRANSACTION_FAILED) from e
@@ -159,8 +183,10 @@ class MSSQLDatabase(DatabaseInterface):
     # SHUTDOWN
     # ------------------------------------------------------------
     def close(self) -> None:
+        conn = self._require_connection()
         try:
-            if self.connection:
-                self.connection.close()
+            conn.close()
+            self.connection = None
         except Exception as e:
             logging.error("DB_CLOSE_FAILED %s", e)
+            raise RuntimeError(StatusCode.DB_TRANSACTION_FAILED) from e
