@@ -17,6 +17,14 @@ Risk Quantification: Provides data to help understand the financial impact of cy
 
 This application is built to export data via the extensive BitSight API for  writing it into **Microsoft SQL Server (MSSQL)** using a **1:1 physical table representation** of BitSight endpoints.
 
+
+## ⚠️ Disclaimer
+
+This tool is **not an official BitSight product**.
+
+Use of this software is **not covered** by any license, warranty, or support agreement you may have with BitSight.
+All functionality is implemented independently using publicly available Bitsight API Documentation: https://help.bitsighttech.com/hc/en-us/articles/231872628-API-Documentation-Overview
+
 ---
 
 ## ✅ Help and discovery
