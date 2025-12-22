@@ -7,7 +7,7 @@ Mechanical status code catalog for BitSight SDK + CLI.
 Rules:
 - Each status code represents ONE concrete runtime event.
 - No code is reused for multiple failure modes.
-- All ranges are fully populated.
+- All ranges are fully populated (0–99).
 - Descriptions are factual and operational.
 """
 
@@ -24,25 +24,25 @@ class StatusCode(IntEnum):
     """Execution completed successfully. All operations completed as requested."""
 
     OK_NO_DATA = 1
-    """Execution completed successfully. Endpoint returned zero records."""
+    """Execution completed successfully. Endpoint returned zero records and zero were expected."""
 
     OK_NO_CHANGES = 2
-    """Execution completed successfully. Data fetched but no state changes occurred."""
+    """Execution completed successfully. Data fetched but produced no changes in target state."""
 
     OK_ALREADY_CURRENT = 3
-    """Execution completed successfully. Target state already matched source state."""
+    """Execution completed successfully. Target state already matched desired state."""
 
     OK_PARTIAL = 4
-    """Execution completed with partial success. Some records succeeded, others skipped."""
+    """Execution completed successfully but only a defined subset of scope was processed (by design)."""
 
     OK_SKIPPED = 5
-    """Execution intentionally skipped due to configuration or runtime condition."""
+    """Execution intentionally skipped due to a validated runtime condition."""
 
     OK_DRY_RUN = 6
     """Execution completed successfully in dry-run mode. No state was modified."""
 
     OK_NOT_APPLICABLE = 7
-    """Execution completed successfully. Operation not applicable in this context."""
+    """Execution completed successfully. Operation was not applicable in this context."""
 
     OK_DEPRECATED_ENDPOINT = 8
     """Execution completed successfully using a deprecated API endpoint."""
@@ -67,7 +67,7 @@ class StatusCode(IntEnum):
     """Access to configuration file was denied."""
 
     CONFIG_INCOMPLETE = 14
-    """Configuration is missing required fields."""
+    """Configuration is present but missing required fields."""
 
     CONFIG_CONFLICT = 15
     """Configuration contains mutually exclusive or conflicting values."""
@@ -95,7 +95,7 @@ class StatusCode(IntEnum):
     """API key was rejected by the BitSight API."""
 
     AUTH_API_KEY_EXPIRED = 22
-    """API key was valid but has expired."""
+    """API key was accepted but is no longer valid (expired/disabled)."""
 
     AUTH_FORBIDDEN = 23
     """Authenticated successfully, but access to the requested resource is forbidden."""
@@ -184,7 +184,7 @@ class StatusCode(IntEnum):
     """API response schema differs from expected contract."""
 
     API_UNEXPECTED_RESPONSE = 49
-    """API response could not be interpreted."""
+    """API response could not be interpreted as a valid payload."""
 
     # ============================================================
     # 50–59 : DATA PARSING / VALIDATION
@@ -203,7 +203,7 @@ class StatusCode(IntEnum):
     """Data was truncated due to size constraints."""
 
     DATA_DUPLICATE = 54
-    """Duplicate record detected."""
+    """Duplicate record detected during processing."""
 
     DATA_MISSING_FIELD = 55
     """Required data field is missing."""
@@ -265,13 +265,13 @@ class StatusCode(IntEnum):
     """Failed to fetch data from API during ingestion."""
 
     INGESTION_ZERO_RECORDS = 72
-    """Ingestion returned zero records when records were expected."""
+    """Ingestion returned fewer than the configured minimum expected records."""
 
     INGESTION_WRITE_FAILED = 73
-    """Failed to write ingested data to database."""
+    """Failed to write ingested data to the target system."""
 
     INGESTION_PARTIAL_WRITE = 74
-    """Only a subset of records were written successfully."""
+    """Some records were written successfully while others failed."""
 
     INGESTION_FLUSH_FAILED = 75
     """Flush operation failed."""
@@ -280,7 +280,7 @@ class StatusCode(IntEnum):
     """Backfill operation failed."""
 
     INGESTION_INTERRUPTED = 77
-    """Ingestion interrupted by external signal."""
+    """Ingestion interrupted by external signal or operator action."""
 
     INGESTION_STATE_UPDATE_FAILED = 78
     """Failed to update ingestion state metadata."""
