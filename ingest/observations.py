@@ -4,7 +4,7 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import urljoin
 
 # BitSight Observations endpoint (per company)
 BITSIGHT_COMPANY_OBSERVATIONS_ENDPOINT = "/ratings/v1/companies/{company_guid}/observations"
@@ -20,7 +20,7 @@ def fetch_observations(
 ) -> List[Dict[str, Any]]:
     """
     Fetch observations for a single company.
-    Deterministic pagination using links.next.
+    Deterministic pagination using links.next when present.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
@@ -39,9 +39,13 @@ def fetch_observations(
 
     while True:
         params = {"limit": limit, "offset": offset}
+
         logging.info(
-            f"Fetching observations for company {company_guid}: {url} "
-            f"(limit={limit}, offset={offset})"
+            "Fetching observations for company %s: %s (limit=%d, offset=%d)",
+            company_guid,
+            url,
+            limit,
+            offset,
         )
 
         resp = session.get(
@@ -71,12 +75,8 @@ def fetch_observations(
         next_link = links.get("next")
 
         if next_link:
-            url = _absolutize_next(url, next_link)
-            next_offset = _extract_offset(url)
-            if next_offset is not None:
-                offset = next_offset
-            else:
-                offset += limit
+            # Keep offset deterministic; do not mutate base URL across pages.
+            offset += limit
             continue
 
         if len(results) < limit:
@@ -85,7 +85,9 @@ def fetch_observations(
         offset += limit
 
     logging.info(
-        f"Total observations fetched for company {company_guid}: {len(records)}"
+        "Total observations fetched for company %s: %d",
+        company_guid,
+        len(records),
     )
     return records
 
@@ -94,13 +96,3 @@ def _absolutize_next(current_url: str, next_link: str) -> str:
     if next_link.startswith("http://") or next_link.startswith("https://"):
         return next_link
     return urljoin(current_url, next_link)
-
-
-def _extract_offset(url: str) -> Optional[int]:
-    try:
-        qs = parse_qs(urlparse(url).query)
-        if "offset" in qs and qs["offset"]:
-            return int(qs["offset"][0])
-    except Exception:
-        return None
-    return None
