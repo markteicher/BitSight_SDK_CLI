@@ -46,8 +46,11 @@ def fetch_provider_dependencies(
         params = {"limit": limit, "offset": offset}
 
         logging.info(
-            f"Fetching provider dependencies for provider {provider_guid}: "
-            f"{url} (limit={limit}, offset={offset})"
+            "Fetching provider dependencies for provider %s: %s (limit=%d, offset=%d)",
+            provider_guid,
+            url,
+            limit,
+            offset,
         )
 
         resp = session.get(
@@ -91,8 +94,9 @@ def fetch_provider_dependencies(
         offset += limit
 
     logging.info(
-        f"Total dependent companies fetched for provider {provider_guid}: "
-        f"{len(records)}"
+        "Total dependent companies fetched for provider %s: %d",
+        provider_guid,
+        len(records),
     )
     return records
 
