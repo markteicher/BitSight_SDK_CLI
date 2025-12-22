@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from urllib.parse import urljoin
 
+# BitSight Service Providers endpoint
 BITSIGHT_SERVICE_PROVIDERS_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/service-providers"
 )
@@ -21,12 +22,14 @@ def fetch_service_providers(
     proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch service providers of a third-party company.
+    Fetch service providers for a third-party company.
 
     Endpoint:
         GET /ratings/v1/companies/{company_guid}/service-providers
 
-    Full field coverage, lossless ingestion.
+    Deterministic pagination using links.next.
+    Full-field, lossless ingestion.
+    Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
     if base_url.endswith("/"):
