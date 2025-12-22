@@ -21,6 +21,10 @@ def fetch_findings_statistics(
 ) -> Dict[str, Any]:
     """
     Fetch findings statistics for a single company.
+
+    Endpoint:
+        GET /ratings/v1/companies/{company_guid}/findings/statistics
+
     This endpoint is non-paginated and returns aggregate statistics.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
@@ -37,7 +41,9 @@ def fetch_findings_statistics(
     ingested_at = datetime.utcnow()
 
     logging.info(
-        f"Fetching findings statistics for company {company_guid}: {url}"
+        "Fetching findings statistics for company %s: %s",
+        company_guid,
+        url,
     )
 
     resp = session.get(
@@ -51,10 +57,13 @@ def fetch_findings_statistics(
 
     payload = resp.json()
 
-    record = {
+    return {
         "company_guid": company_guid,
+        "open_findings": payload.get("open"),
+        "closed_findings": payload.get("closed"),
+        "risk_vector_breakdown": payload.get("risk_vector"),
+        "severity_breakdown": payload.get("severity"),
+        "grade_breakdown": payload.get("grade"),
         "ingested_at": ingested_at,
         "raw_payload": payload,
     }
-
-    return record
