@@ -17,11 +17,12 @@ def fetch_nist_csf_report(
     proxies: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
-    Fetch the NIST CSF report for a company.
+    Fetch the NIST CSF report for a single company.
 
-    Documented endpoint:
-      GET /companies/{company_guid}/regulatory/nist
+    Endpoint:
+        GET /companies/{company_guid}/regulatory/nist
 
+    This endpoint is non-paginated and returns a single report payload.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
@@ -32,7 +33,11 @@ def fetch_nist_csf_report(
     headers = {"Accept": "application/json"}
     ingested_at = datetime.utcnow()
 
-    logging.info(f"Fetching NIST CSF report for company {company_guid}: {url}")
+    logging.info(
+        "Fetching NIST CSF report for company %s: %s",
+        company_guid,
+        url,
+    )
 
     resp = session.get(
         url,
