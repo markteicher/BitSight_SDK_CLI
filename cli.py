@@ -2,12 +2,10 @@
 
 import argparse
 import importlib
+import json
 import logging
 import sys
-import json
-from typing import Optional, Dict, Callable
-
-from tqdm import tqdm
+from typing import Optional, Dict
 
 
 # ----------------------------------------------------------------------
@@ -18,10 +16,15 @@ class JsonLogFormatter(logging.Formatter):
         payload = {
             "timestamp": self.formatTime(record, "%Y-%m-%d %H:%M:%S"),
             "level": record.levelname,
-            "message": record.getMessage(),
             "logger": record.name,
+            "message": record.getMessage(),
         }
-        return json.dumps(payload)
+
+        # Attach exception info if present (combat debugging)
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def setup_logging(verbose: bool, json_logs: bool) -> None:
@@ -32,8 +35,8 @@ def setup_logging(verbose: bool, json_logs: bool) -> None:
     else:
         handler.setFormatter(
             logging.Formatter(
-                "%(asctime)s [%(levelname)s] %(message)s",
-                "%Y-%m-%d %H:%M:%S",
+                fmt="%(asctime)s [%(levelname)s] %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
             )
         )
 
@@ -46,45 +49,11 @@ def setup_logging(verbose: bool, json_logs: bool) -> None:
 # ----------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------
-def build_proxies(args: argparse.Namespace) -> Optional[Dict[str, str]]:
-    if not args.proxy_url:
-        return None
-    return {
-        "http": args.proxy_url,
-        "https": args.proxy_url,
-    }
-
-
-def exit_cli() -> None:
-    print("Thank you for using the BitSight CLI")
-    sys.exit(0)
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        logging.error(message)
-        sys.exit(1)
-
-
 def ingest_module_name(subcommand: str) -> str:
     return subcommand.replace("-", "_")
 
 
-def wrap_writer(writer: Callable, dry_run: bool) -> Callable:
-    """
-    Dry-run wrapper: preserves ingestion flow, blocks side effects.
-    """
-    if not dry_run:
-        return writer
-
-    def _noop_writer(record):
-        logging.debug("DRY-RUN: record suppressed")
-        return None
-
-    return _noop_writer
-
-
-def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
+def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> int:
     module_name = ingest_module_name(subcommand)
     full_module = f"ingest.{module_name}"
 
@@ -92,14 +61,14 @@ def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
         module = importlib.import_module(full_module)
     except ModuleNotFoundError:
         logging.error("Missing ingest module: %s.py", module_name)
-        sys.exit(1)
+        return 1
 
     # function-style entrypoints
     for entry in ("main", "run", "cli"):
         fn = getattr(module, entry, None)
         if callable(fn):
             fn(args)
-            return
+            return 0
 
     # class-style entrypoints
     for attr in dir(module):
@@ -107,12 +76,13 @@ def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
             cls = getattr(module, attr)
             if isinstance(cls, type):
                 obj = cls()
-                if hasattr(obj, "run"):
-                    obj.run()
-                    return
+                run = getattr(obj, "run", None)
+                if callable(run):
+                    run()
+                    return 0
 
     logging.error("No valid entrypoint found in ingest module: %s", module_name)
-    sys.exit(1)
+    return 1
 
 
 def _add_db_connection_args(p: argparse.ArgumentParser) -> None:
@@ -126,17 +96,17 @@ def _add_db_connection_args(p: argparse.ArgumentParser) -> None:
 # ----------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="bitsight",
+        prog="bitsight-cli",
         description="BitSight SDK + CLI",
         add_help=True,
     )
 
     # global options
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--json-logs", action="store_true")   # NEW
-    parser.add_argument("--dry-run", action="store_true")     # NEW
+    parser.add_argument("--json-logs", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--api-key")
     parser.add_argument("--base-url")
@@ -146,8 +116,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     # ------------------------------------------------------------------
-    # exit aliases
+    # help + exit aliases
     # ------------------------------------------------------------------
+    subparsers.add_parser("help")
     for name in ("exit", "quit", "x", "q"):
         subparsers.add_parser(name)
 
@@ -177,7 +148,7 @@ def main() -> None:
     db_init = db_sub.add_parser("init")
     _add_db_connection_args(db_init)
     db_init.add_argument("--schema-path", default="db/schema/mssql.sql")
-    db_init.add_argument("--stamp-schema", action="store_true")  # NEW
+    db_init.add_argument("--stamp-schema", action="store_true")
 
     for name in ("flush", "clear"):
         p = db_sub.add_parser(name)
@@ -235,28 +206,28 @@ def main() -> None:
     args = parser.parse_args()
     setup_logging(args.verbose, args.json_logs)
 
-    if args.command in ("exit", "quit", "x", "q"):
-        exit_cli()
-
     if args.command in (None, "help"):
         parser.print_help()
-        return
+        return 0
+
+    if args.command in ("exit", "quit", "x", "q"):
+        print("Thank you for using the BitSight CLI")
+        return 0
 
     if args.command == "ingest":
-        dispatch_ingest(args.subcommand, args)
-        return
+        return dispatch_ingest(args.subcommand, args)
 
     if args.command == "db":
         logging.info("db command selected: %s", args.subcommand)
-        return
+        return 0
 
     if args.command == "config":
         logging.info("config command selected: %s", args.subcommand)
-        return
+        return 0
 
     logging.error("Unhandled command")
-    sys.exit(1)
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
