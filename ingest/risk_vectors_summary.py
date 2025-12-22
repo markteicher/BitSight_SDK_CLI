@@ -3,7 +3,8 @@
 import logging
 import requests
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Optional
+from typing import Dict, Any
 
 # BitSight Risk Vectors Summary endpoint
 BITSIGHT_RISK_VECTORS_SUMMARY_ENDPOINT = "/ratings/v1/risk-vectors/summary"
@@ -15,12 +16,18 @@ def fetch_risk_vectors_summary(
     api_key: str,
     company_guid: Optional[str] = None,
     timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
+    proxies: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     Fetch risk vectors summary.
-    Supports optional company_guid filtering.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+
+    Endpoint:
+        GET /ratings/v1/risk-vectors/summary
+
+    Optional filtering:
+        - company_guid
+
+    This endpoint is non-paginated and returns aggregate data.
     """
 
     if base_url.endswith("/"):
@@ -50,10 +57,8 @@ def fetch_risk_vectors_summary(
     )
     resp.raise_for_status()
 
-    payload = resp.json()
-
     return {
         "company_guid": company_guid,
         "ingested_at": ingested_at,
-        "raw_payload": payload,
+        "raw_payload": resp.json(),
     }
