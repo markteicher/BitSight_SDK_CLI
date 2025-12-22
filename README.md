@@ -31,9 +31,9 @@ All functionality is implemented independently using publicly available Bitsight
 
 Running any of the following prints the **full command tree** (all commands + subcommands):
 
-- `bitsight --help`
-- `bitsight -h`
-- `bitsight help`
+- `bitsight-cli --help`
+- `bitsight-cli -h`
+- `bitsight-cli help`
 
 ---
 
@@ -41,8 +41,8 @@ Running any of the following prints the **full command tree** (all commands + su
 
 The CLI supports explicit exit commands:
 
-- `bitsight exit`
-- `bitsight quit`
+- `bitsight-cli exit`
+- `bitsight-cli quit`
 - `x`
 - `q`
 
@@ -69,7 +69,7 @@ These options apply to all commands (when present on the CLI):
 
 ## 🧭 Command taxonomy
 
-The CLI is organized into two planes:
+The BitSight CLI is organized into two planes:
 
 ### A) Control plane (changes state)
 - `config` — configuration management
@@ -89,12 +89,12 @@ The CLI is organized into two planes:
 
 | Command | Purpose |
 |---|---|
-| `bitsight config init` | Create initial config state |
-| `bitsight config show` | Display current config |
-| `bitsight config validate` | Validate config + connectivity |
-| `bitsight config reset` | Reset config to defaults |
-| `bitsight config clear-keys` | Clear stored secrets/keys |
-| `bitsight config set ...` | Set config fields |
+| `bitsight-cli config init` | Create initial config state |
+| `bitsight-cli config show` | Display current config |
+| `bitsight-cli config validate` | Validate config + connectivity |
+| `bitsight-cli config reset` | Reset config to defaults |
+| `bitsight-cli config clear-keys` | Clear stored secrets/keys |
+| `bitsight-cli config set ...` | Set config fields |
 
 `config set` flags:
 
@@ -111,21 +111,21 @@ The CLI is organized into two planes:
 
 ### Initialize schema
 ```bash
-bitsight db init --mssql --server <server> --database <db> --username <user> --password <pass> --schema-path db/schema/mssql.sql
+bitsight-cli db init --mssql --server <server> --database <db> --username <user> --password <pass> --schema-path db/schema/mssql.sql
 ```
 
 ### Flush data
 ```bash
 # Flush one table
-bitsight db flush --mssql --server <server> --database <db> --username <user> --password <pass> --table bitsight_users
+bitsight-cli db flush --mssql --server <server> --database <db> --username <user> --password <pass> --table bitsight_users
 
 # Flush all BitSight tables
-bitsight db flush --mssql --server <server> --database <db> --username <user> --password <pass> --all
+bitsight-cli db flush --mssql --server <server> --database <db> --username <user> --password <pass> --all
 ```
 
 ### Status
 ```bash
-bitsight db status
+bitsight-cli db status
 ```
 
 ---
@@ -135,40 +135,40 @@ bitsight db status
 Each `ingest` command maps to a BitSight API endpoint and writes results into its corresponding MSSQL table(s).
 
 ### Users
-- `bitsight ingest users`
-- `bitsight ingest user-details --user-guid <guid>`
-- `bitsight ingest user-quota`
-- `bitsight ingest user-company-views`
+- `bitsight-cli ingest users`
+- `bitsight-cli ingest user-details --user-guid <guid>`
+- `bitsight-cli ingest user-quota`
+- `bitsight-cli ingest user-company-views`
 
 ### Companies
-- `bitsight ingest companies`
-- `bitsight ingest company-details --company-guid <guid>`
+- `bitsight-cli ingest companies`
+- `bitsight-cli ingest company-details --company-guid <guid>`
 
 ### Portfolio
-- `bitsight ingest portfolio`
-- `bitsight ingest portfolio-details --company-guid <guid>`
-- `bitsight ingest portfolio-contacts`
-- `bitsight ingest portfolio-public-disclosures`
+- `bitsight-cli ingest portfolio`
+- `bitsight-cli ingest portfolio-details --company-guid <guid>`
+- `bitsight-cli ingest portfolio-contacts`
+- `bitsight-cli ingest portfolio-public-disclosures`
 
 ### Ratings
-- `bitsight ingest current-ratings`
-- `bitsight ingest current-ratings-v2`
-- `bitsight ingest ratings-history --company-guid <guid> --since <date> [--backfill]`
+- `bitsight-cli ingest current-ratings`
+- `bitsight-cli ingest current-ratings-v2`
+- `bitsight-cli ingest ratings-history --company-guid <guid> --since <date> [--backfill]`
 
 ### Findings & observations
-- `bitsight ingest findings --company-guid <guid> --since <date> [--expand <value>]`
-- `bitsight ingest observations --company-guid <guid> --since <date>`
+- `bitsight-clo ingest findings --company-guid <guid> --since <date> [--expand <value>]`
+- `bitsight-cli ingest observations --company-guid <guid> --since <date>`
 
 ### Threat intelligence / threats
-- `bitsight ingest threats`
-- bitsight ingest threat-exposures`
+- `bitsight-cli ingest threats`
+- bitsight-cli ingest threat-exposures`
 
 ### Alerts
-- `bitsight ingest alerts --since <date>`
+- `bitsight-cli ingest alerts --since <date>`
 
 ### Credentials
-- `bitsight ingest credential-leaks`
-- `bitsight ingest exposed-credentials`
+- `bitsight-cli ingest credential-leaks`
+- `bitsight-cli ingest exposed-credentials`
 
 ---
 
@@ -176,9 +176,9 @@ Each `ingest` command maps to a BitSight API endpoint and writes results into it
 
 Grouped ingestion runs multiple ingestion commands in sequence:
 
-- `bitsight ingest-group core`
-- `bitsight ingest-group security`
-- `bitsight ingest-group all`
+- `bitsight-cli ingest-group core`
+- `bitsight-cli ingest-group security`
+- `bitsight-cli ingest-group all`
 
 (These groupings are explicitly wired.)
 
