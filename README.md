@@ -156,7 +156,7 @@ Each `ingest` command maps to a BitSight API endpoint and writes results into it
 - `bitsight-cli ingest ratings-history --company-guid <guid> --since <date> [--backfill]`
 
 ### Findings & observations
-- `bitsight-clo ingest findings --company-guid <guid> --since <date> [--expand <value>]`
+- `bitsight-cli ingest findings --company-guid <guid> --since <date> [--expand <value>]`
 - `bitsight-cli ingest observations --company-guid <guid> --since <date>`
 
 ### Threat intelligence / threats
