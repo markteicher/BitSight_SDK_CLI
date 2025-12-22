@@ -4,9 +4,10 @@ import logging
 import requests
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, List, Optional
 from urllib.parse import urljoin
 
+# BitSight Ratings Tree Product Types endpoint
 BITSIGHT_RATINGS_TREE_PRODUCT_TYPES_ENDPOINT = (
     "/ratings/v1/ratings-tree/product-types"
 )
@@ -17,16 +18,19 @@ def fetch_ratings_tree_product_types(
     base_url: str,
     api_key: str,
     timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
+    proxies: Optional[dict] = None,
+) -> List[dict]:
     """
     Fetch product types in the BitSight ratings tree.
 
     Endpoint:
         GET /ratings/v1/ratings-tree/product-types
 
+    Deterministic pagination using limit / offset and links.next.
+
     Full 1:1 physical field mapping of results[]:
-        product_type, company_guids
+        - product_type
+        - company_guids
     """
 
     if base_url.endswith("/"):
@@ -35,7 +39,7 @@ def fetch_ratings_tree_product_types(
     url = f"{base_url}{BITSIGHT_RATINGS_TREE_PRODUCT_TYPES_ENDPOINT}"
     headers = {"Accept": "application/json"}
 
-    records: List[Dict[str, Any]] = []
+    records: List[dict] = []
     ingested_at = datetime.utcnow()
 
     limit = 100
