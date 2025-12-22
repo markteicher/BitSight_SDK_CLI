@@ -173,44 +173,77 @@ def main() -> None:
         p.add_argument("--flush", action="store_true")
         return p
 
-    # users
+    # -------------------------
+    # identity / users
+    # -------------------------
     ingest_cmd("users")
-    ingest_cmd("user-details", [
-        (["--user-guid"], {"required": True})
-    ])
 
-    # existing ingest commands (unchanged)
+    ingest_cmd(
+        "user-details",
+        [
+            (["--user-guid"], {"required": True}),
+        ],
+    )
+
     ingest_cmd("user-quota")
     ingest_cmd("user-company-views")
 
+    # -------------------------
+    # core data
+    # -------------------------
     ingest_cmd("companies")
-    ingest_cmd("company-details", [(["--company-guid"], {"required": True})])
+    ingest_cmd(
+        "company-details",
+        [
+            (["--company-guid"], {"required": True}),
+        ],
+    )
 
     ingest_cmd("portfolio")
     ingest_cmd("current-ratings")
     ingest_cmd("current-ratings-v2")
 
-    ingest_cmd("ratings-history", [
-        (["--company-guid"], {"required": True}),
-    ])
+    ingest_cmd(
+        "ratings-history",
+        [
+            (["--company-guid"], {"required": True}),
+        ],
+    )
 
-    ingest_cmd("findings", [
-        (["--company-guid"], {"required": True}),
-    ])
+    ingest_cmd(
+        "findings",
+        [
+            (["--company-guid"], {"required": True}),
+        ],
+    )
 
-    ingest_cmd("observations", [
-        (["--company-guid"], {"required": True}),
-    ])
+    ingest_cmd(
+        "observations",
+        [
+            (["--company-guid"], {"required": True}),
+        ],
+    )
 
+    # -------------------------
+    # threats
+    # -------------------------
     ingest_cmd("threats")
     ingest_cmd("threat-statistics")
-    ingest_cmd("threats-impact", [
-        (["--threat-guid"], {"required": True}),
-    ])
-    ingest_cmd("threats-evidence", [
-        (["--threat-guid"], {"required": True}),
-        (["--entity-guid"], {"required": True}),
-    ])
+
+    ingest_cmd(
+        "threats-impact",
+        [
+            (["--threat-guid"], {"required": True}),
+        ],
+    )
+
+    ingest_cmd(
+        "threats-evidence",
+        [
+            (["--threat-guid"], {"required": True}),
+            (["--entity-guid"], {"required": True}),
+        ],
+    )
 
     # ------------------------------------------------------------------
     # help
