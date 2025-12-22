@@ -8,6 +8,16 @@ from db.mssql import MSSQLDatabase
 
 
 class MSSQLInitializer:
+    """
+    Executes a full BitSight MSSQL schema in a combat-grade, deterministic manner.
+
+    Guarantees:
+      - GO-delimited batch execution
+      - Explicit transaction handling
+      - Loud, operator-visible failure
+      - Zero silent partial deployment
+    """
+
     def __init__(
         self,
         server: str,
@@ -33,16 +43,18 @@ class MSSQLInitializer:
     # ------------------------------------------------------------
     def run(self) -> None:
         logging.info("Initializing BitSight MSSQL schema")
-        statements = self._load_schema_statements()
+        batches = self._load_schema_batches()
 
         try:
-            for stmt in statements:
-                stmt = stmt.strip()
-                if not stmt:
+            for idx, batch in enumerate(batches, start=1):
+                batch = batch.strip()
+                if not batch:
                     continue
 
-                logging.debug("Executing schema statement")
-                self.db.execute(stmt)
+                logging.info("Executing schema batch %d/%d", idx, len(batches))
+                logging.debug("Batch preview:\n%s", batch[:500])
+
+                self.db.execute(batch)
 
             self.db.commit()
             logging.info("MSSQL schema initialized successfully")
@@ -60,66 +72,34 @@ class MSSQLInitializer:
     # ------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------
-    def _load_schema_statements(self) -> List[str]:
+    def _load_schema_batches(self) -> List[str]:
         """
-        Load and split schema into executable MSSQL statements.
+        Split schema file into MSSQL execution batches using GO delimiters.
 
-        Contract:
-          - Statements are semicolon-delimited
-          - 'GO' is ignored defensively if present
-          - Block and line comments are preserved but never executed alone
+        Semicolons are NOT treated as batch boundaries.
         """
+
         raw_sql = self.schema_path.read_text(encoding="utf-8")
-        raw_sql = raw_sql.replace("\ufeff", "").replace("\r\n", "\n").strip()
 
-        statements: List[str] = []
+        # Normalize BOMs and line endings
+        raw_sql = raw_sql.replace("\ufeff", "")
+
+        batches: List[str] = []
         buffer: List[str] = []
 
-        in_block_comment = False
-
-        def flush_buffer() -> None:
-            stmt = "\n".join(buffer).strip()
-            buffer.clear()
-
-            if not stmt:
-                return
-
-            # Drop comment-only statements
-            lines = [ln.strip() for ln in stmt.splitlines() if ln.strip()]
-            if lines and all(ln.startswith("--") for ln in lines):
-                return
-
-            statements.append(stmt.rstrip(";").strip())
-
         for line in raw_sql.splitlines():
-            stripped = line.strip()
-
-            # Ignore batch separators defensively
-            if not in_block_comment and stripped.upper() == "GO":
-                continue
-
-            # Handle block comments
-            if not in_block_comment and "/*" in stripped:
-                in_block_comment = True
-
-            if in_block_comment:
+            if line.strip().upper() == "GO":
+                batch = "\n".join(buffer).strip()
+                if batch:
+                    batches.append(batch)
+                buffer.clear()
+            else:
                 buffer.append(line)
-                if "*/" in stripped:
-                    in_block_comment = False
-                continue
 
-            # Line comments / blanks
-            if stripped.startswith("--") or not stripped:
-                buffer.append(line)
-                continue
+        # Final batch (no trailing GO)
+        final_batch = "\n".join(buffer).strip()
+        if final_batch:
+            batches.append(final_batch)
 
-            buffer.append(line)
-
-            if stripped.endswith(";"):
-                flush_buffer()
-
-        if buffer:
-            flush_buffer()
-
-        logging.info("Loaded %d schema statements", len(statements))
-        return statements
+        logging.info("Loaded %d MSSQL schema batches", len(batches))
+        return batches
