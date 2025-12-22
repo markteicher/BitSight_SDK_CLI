@@ -19,6 +19,10 @@ def fetch_insights(
 ) -> List[Dict[str, Any]]:
     """
     Fetch BitSight insights.
+
+    Endpoint:
+        GET /ratings/v1/insights
+
     Deterministic pagination using links.next when present.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
@@ -37,7 +41,12 @@ def fetch_insights(
 
     while True:
         params = {"limit": limit, "offset": offset}
-        logging.info(f"Fetching insights: {url} (limit={limit}, offset={offset})")
+        logging.info(
+            "Fetching insights: %s (limit=%d, offset=%d)",
+            url,
+            limit,
+            offset,
+        )
 
         resp = session.get(
             url,
@@ -68,18 +77,23 @@ def fetch_insights(
 
         offset += limit
 
-    logging.info(f"Total insights fetched: {len(records)}")
+    logging.info("Total insights fetched: %d", len(records))
     return records
 
 
-def _normalize_insight(obj: Dict[str, Any], ingested_at: datetime) -> Dict[str, Any]:
+def _normalize_insight(
+    obj: Dict[str, Any],
+    ingested_at: datetime,
+) -> Dict[str, Any]:
     """
     Map insight object into dbo.bitsight_insights schema.
     """
 
+    company = obj.get("company") or {}
+
     return {
         "insight_guid": obj.get("guid"),
-        "company_guid": (obj.get("company") or {}).get("guid"),
+        "company_guid": company.get("guid"),
         "ingested_at": ingested_at,
         "raw_payload": obj,
     }
