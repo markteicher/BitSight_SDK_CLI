@@ -4,37 +4,42 @@ import logging
 import requests
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, List, Optional
 from urllib.parse import urljoin
 
-BITSIGHT_RATINGS_TREE_PRODUCTS_ENDPOINT = (
-    "/ratings/v1/ratings-tree/products"
+# BitSight Ratings Tree Product Types endpoint
+BITSIGHT_RATINGS_TREE_PRODUCT_TYPES_ENDPOINT = (
+    "/ratings/v1/ratings-tree/product-types"
 )
 
 
-def fetch_ratings_tree_products(
+def fetch_ratings_tree_product_types(
     session: requests.Session,
     base_url: str,
     api_key: str,
     timeout: int = 60,
-    proxies: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
+    proxies: Optional[dict] = None,
+) -> List[dict]:
     """
-    Fetch products in the BitSight ratings tree.
+    Fetch product types in the BitSight ratings tree.
 
     Endpoint:
-        GET /ratings/v1/ratings-tree/products
+        GET /ratings/v1/ratings-tree/product-types
 
-    Full 1:1 physical field mapping.
+    Deterministic pagination using limit / offset and links.next.
+
+    Full 1:1 physical field mapping of results[]:
+        - product_type
+        - company_guids
     """
 
     if base_url.endswith("/"):
         base_url = base_url[:-1]
 
-    url = f"{base_url}{BITSIGHT_RATINGS_TREE_PRODUCTS_ENDPOINT}"
+    url = f"{base_url}{BITSIGHT_RATINGS_TREE_PRODUCT_TYPES_ENDPOINT}"
     headers = {"Accept": "application/json"}
 
-    records: List[Dict[str, Any]] = []
+    records: List[dict] = []
     ingested_at = datetime.utcnow()
 
     limit = 100
@@ -44,7 +49,7 @@ def fetch_ratings_tree_products(
         params = {"limit": limit, "offset": offset}
 
         logging.info(
-            f"Fetching ratings tree products: {url} "
+            f"Fetching ratings tree product types: {url} "
             f"(limit={limit}, offset={offset})"
         )
 
@@ -62,22 +67,14 @@ def fetch_ratings_tree_products(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append({
-                "product_guid": obj.get("product_guid"),
-                "product_name": obj.get("product_name"),
-                "product_types": json.dumps(obj.get("product_types")),
-                "provider_guid": obj.get("provider_guid"),
-                "provider_name": obj.get("provider_name"),
-                "provider_industry": obj.get("provider_industry"),
-                "company_count": obj.get("company_count"),
-                "domain_count": obj.get("domain_count"),
-                "percent_dependent": obj.get("percent_dependent"),
-                "percent_dependent_company": obj.get("percent_dependent_company"),
-                "relative_importance": obj.get("relative_importance"),
-                "relative_criticality": obj.get("relative_criticality"),
-                "ingested_at": ingested_at,
-                "raw_payload": obj,
-            })
+            records.append(
+                {
+                    "product_type": obj.get("product_type"),
+                    "company_guids": json.dumps(obj.get("company_guids")),
+                    "ingested_at": ingested_at,
+                    "raw_payload": obj,
+                }
+            )
 
         links = payload.get("links") or {}
         next_link = links.get("next")
@@ -93,7 +90,7 @@ def fetch_ratings_tree_products(
         offset += limit
 
     logging.info(
-        f"Total ratings tree products fetched: {len(records)}"
+        f"Total ratings tree product types fetched: {len(records)}"
     )
     return records
 
