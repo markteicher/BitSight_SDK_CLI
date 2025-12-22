@@ -7,6 +7,7 @@ import io
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+# BitSight Ratings History endpoint (CSV response)
 BITSIGHT_RATINGS_HISTORY_ENDPOINT = (
     "/ratings/v1/companies/{company_guid}/reports/ratings-history"
 )
@@ -21,8 +22,18 @@ def fetch_ratings_history_for_company(
     proxies: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch ratings history (daily, 1 year) for a single company.
-    Endpoint returns CSV.
+    Fetch ratings history (daily ratings, ~1 year) for a single company.
+
+    Endpoint:
+        GET /ratings/v1/companies/{company_guid}/reports/ratings-history
+
+    Response format:
+        CSV (not JSON)
+
+    Notes:
+        - This endpoint is non-paginated
+        - Each CSV row represents a single rating snapshot
+        - raw_payload stores the parsed CSV row for traceability
     """
 
     if base_url.endswith("/"):
@@ -32,7 +43,9 @@ def fetch_ratings_history_for_company(
     headers = {"Accept": "text/csv"}
     ingested_at = datetime.utcnow()
 
-    logging.info(f"Fetching ratings history for company {company_guid}")
+    logging.info(
+        f"Fetching ratings history for company {company_guid}: {url}"
+    )
 
     resp = session.get(
         url,
@@ -57,10 +70,15 @@ def fetch_ratings_history_for_company(
             {
                 "company_guid": company_guid,
                 "rating_date": rating_date,
-                "rating": int(rating) if rating else None,
+                "rating": int(rating) if rating and rating.isdigit() else None,
                 "ingested_at": ingested_at,
-                "raw_payload": row,
+                "raw_payload": row,  # CSV row preserved verbatim
             }
         )
+
+    logging.info(
+        f"Total ratings history records fetched for company {company_guid}: "
+        f"{len(records)}"
+    )
 
     return records
