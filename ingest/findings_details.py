@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import logging
 import requests
 from datetime import datetime
@@ -56,7 +57,6 @@ def fetch_finding_details(
             params["risk_category"] = risk_category
 
         if extra_params:
-            # caller-controlled; no guessing here
             params.update(extra_params)
 
         logging.info(
@@ -78,13 +78,7 @@ def fetch_finding_details(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append(
-                {
-                    "company_guid": company_guid,
-                    "ingested_at": ingested_at,
-                    "raw_payload": obj,
-                }
-            )
+            records.append(_normalize_finding_detail(obj=obj, company_guid=company_guid, ingested_at=ingested_at))
 
         links = payload.get("links") or {}
         next_link = links.get("next")
@@ -103,10 +97,33 @@ def fetch_finding_details(
 
         offset += limit
 
-    logging.info(
-        f"Total finding details fetched for company {company_guid}: {len(records)}"
-    )
+    logging.info(f"Total finding details fetched for company {company_guid}: {len(records)}")
     return records
+
+
+def _normalize_finding_detail(obj: Dict[str, Any], company_guid: str, ingested_at: datetime) -> Dict[str, Any]:
+    """
+    Normalize a finding detail record.
+    Always retains raw_payload.
+    """
+
+    return {
+        "finding_guid": obj.get("guid"),
+        "company_guid": company_guid,
+        "title": obj.get("title"),
+        "category": obj.get("category"),
+        "risk_vector": obj.get("risk_vector"),
+        "risk_category": obj.get("risk_category"),
+        "severity": obj.get("severity"),
+        "grade": obj.get("grade"),
+        "status": obj.get("status"),
+        "first_seen": obj.get("first_seen"),
+        "last_seen": obj.get("last_seen"),
+        "remediation_status": obj.get("remediation_status"),
+        "observations": json.dumps(obj.get("observations")),
+        "ingested_at": ingested_at,
+        "raw_payload": obj,
+    }
 
 
 def _absolutize_next(current_url: str, next_link: str) -> str:
@@ -120,6 +137,6 @@ def _extract_offset(url: str) -> Optional[int]:
         qs = parse_qs(urlparse(url).query)
         if "offset" in qs and qs["offset"]:
             return int(qs["offset"][0])
-    except Exception:
+    except (ValueError, TypeError):
         return None
     return None
