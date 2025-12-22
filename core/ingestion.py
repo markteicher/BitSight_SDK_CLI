@@ -4,11 +4,13 @@ core/ingestion.py
 
 Canonical ingestion execution framework for BitSight SDK + CLI.
 
-Responsibilities:
-- Execute one ingestion unit deterministically
-- Track counts and outcomes
-- Emit StatusCode for runtime events
-- Return an ExitCode decision (CLI/process emits exactly once)
+Design intent (combat / resilient):
+- Deterministic execution lifecycle
+- Explicit state transitions
+- Clear separation of fetch / write concerns
+- Accurate StatusCode + ExitCode emission
+- No silent failures
+- No implicit behavior
 """
 
 from __future__ import annotations
@@ -16,8 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional, Any, Tuple
-from collections.abc import Mapping
+from typing import Callable, Iterable, Optional, Tuple
 
 from tqdm import tqdm
 
@@ -26,248 +27,196 @@ from core.exit_codes import ExitCode
 
 
 # ============================================================
-# Data structures
+# Result object
 # ============================================================
 
 @dataclass(frozen=True)
 class IngestionResult:
     status_code: StatusCode
     exit_code: ExitCode
-    records_fetched: int = 0
-    records_written: int = 0
-    records_failed: int = 0
-    duration_seconds: float = 0.0
+
+    records_fetched: int
+    records_written: int
+    records_failed: int
+
+    duration_seconds: float
     message: Optional[str] = None
 
 
 # ============================================================
-# Ingestion executor
+# Executor
 # ============================================================
 
 class IngestionExecutor:
     """
     Executes a single ingestion workload.
 
-    This class does not:
-    - parse CLI arguments
-    - perform API authentication
-    - manage database connections
-
-    It assumes all dependencies are already validated upstream.
+    Assumptions:
+    - Transport already validated
+    - Database already connected
+    - Caller owns process exit
     """
 
     def __init__(
         self,
         *,
-        fetcher: Callable[[], Iterable[Any]],
-        writer: Callable[[Any], None],
+        fetcher: Callable[[], Iterable],
+        writer: Callable[[object], None],
         expected_min_records: int = 0,
         show_progress: bool = True,
-        fail_fast: bool = False,
-        max_failures: Optional[int] = None,
-        record_label: Optional[Callable[[Any], str]] = None,
-        log_every_n_failures: int = 1,
     ):
         self.fetcher = fetcher
         self.writer = writer
-        self.expected_min_records = int(expected_min_records or 0)
-        self.show_progress = bool(show_progress)
-        self.fail_fast = bool(fail_fast)
-        self.max_failures = max_failures if max_failures is None else int(max_failures)
-        self.record_label = record_label
-        self.log_every_n_failures = max(1, int(log_every_n_failures or 1))
-
-        if not callable(self.fetcher):
-            raise TypeError("fetcher must be callable")
-        if not callable(self.writer):
-            raise TypeError("writer must be callable")
-        if self.max_failures is not None and self.max_failures < 1:
-            raise ValueError("max_failures must be >= 1 when provided")
+        self.expected_min_records = expected_min_records
+        self.show_progress = show_progress
 
     # --------------------------------------------------------
-    # Public
+    # Public API
     # --------------------------------------------------------
     def run(self) -> IngestionResult:
-        start_time = time.monotonic()
+        start_time = time.time()
 
         try:
-            records = self._fetch()
-            fetched_count = len(records)
+            records = self._fetch_records()
+            fetched = len(records)
 
-            if fetched_count == 0:
+            if fetched == 0:
                 return self._finish(
-                    StatusCode.OK_NO_DATA,
-                    ExitCode.SUCCESS_EMPTY_RESULT,
+                    status=StatusCode.OK_NO_DATA,
+                    exit_code=ExitCode.SUCCESS_EMPTY_RESULT,
                     fetched=0,
                     written=0,
                     failed=0,
                     start_time=start_time,
-                    message="No records returned by fetcher",
                 )
 
-            written, failed, aborted = self._write(records)
+            written, failed = self._write_records(records)
 
-            if aborted:
-                return self._finish(
-                    StatusCode.OK_SKIPPED,
-                    ExitCode.INGEST_ABORTED,
-                    fetched=fetched_count,
-                    written=written,
-                    failed=failed,
-                    start_time=start_time,
-                    message="Ingestion aborted due to fail_fast/max_failures",
-                )
-
+            # All writes failed
             if written == 0 and failed > 0:
-                # Correction: DO NOT use a non-existent ExitCode (e.g. INGEST_WRITE_FAILED).
-                # Your enum defines DB_WRITE_FAILED for write failures.
                 return self._finish(
-                    StatusCode.INGESTION_WRITE_FAILED,
-                    ExitCode.DB_WRITE_FAILED,
-                    fetched=fetched_count,
+                    status=StatusCode.INGESTION_WRITE_FAILED,
+                    exit_code=ExitCode.DB_WRITE_FAILED,
+                    fetched=fetched,
                     written=0,
                     failed=failed,
                     start_time=start_time,
-                    message="All writes failed",
                 )
 
+            # Partial failure
             if failed > 0:
                 return self._finish(
-                    StatusCode.INGESTION_PARTIAL_WRITE,
-                    ExitCode.INGEST_PARTIAL_FAILURE,
-                    fetched=fetched_count,
+                    status=StatusCode.INGESTION_PARTIAL_WRITE,
+                    exit_code=ExitCode.INGEST_PARTIAL_FAILURE,
+                    fetched=fetched,
                     written=written,
                     failed=failed,
                     start_time=start_time,
-                    message="Partial write failure",
                 )
 
+            # Full success
             return self._finish(
-                StatusCode.OK,
-                ExitCode.SUCCESS,
-                fetched=fetched_count,
+                status=StatusCode.OK,
+                exit_code=ExitCode.SUCCESS,
+                fetched=fetched,
                 written=written,
                 failed=0,
                 start_time=start_time,
-                message="Ingestion succeeded",
             )
 
         except KeyboardInterrupt:
+            logging.warning("Ingestion interrupted by operator")
             return self._finish(
-                StatusCode.OK_SKIPPED,
-                ExitCode.SUCCESS_OPERATOR_EXIT,
+                status=StatusCode.EXECUTION_INTERRUPTED,
+                exit_code=ExitCode.RUNTIME_INTERRUPT,
+                fetched=0,
+                written=0,
+                failed=0,
                 start_time=start_time,
-                message="Operator interrupted execution",
             )
 
         except Exception as exc:
             logging.exception("Unhandled ingestion exception")
             return self._finish(
-                StatusCode.EXECUTION_UNHANDLED_EXCEPTION,
-                ExitCode.RUNTIME_EXCEPTION,
+                status=StatusCode.EXECUTION_UNHANDLED_EXCEPTION,
+                exit_code=ExitCode.RUNTIME_EXCEPTION,
+                fetched=0,
+                written=0,
+                failed=0,
                 start_time=start_time,
                 message=str(exc),
             )
 
     # --------------------------------------------------------
-    # Internal
+    # Internal helpers
     # --------------------------------------------------------
-    def _fetch(self) -> list:
-        records = self.fetcher()
+    def _fetch_records(self) -> list:
+        try:
+            records = self.fetcher()
+        except Exception as e:
+            logging.exception("Fetcher failed")
+            raise RuntimeError(StatusCode.INGESTION_FETCH_FAILED) from e
 
-        # Reject common “wrong” return types deterministically.
-        if records is None:
-            raise TypeError("Fetcher returned None; must return an iterable of records")
-        if isinstance(records, (str, bytes)):
-            raise TypeError("Fetcher returned str/bytes; must return iterable of records")
-        if isinstance(records, Mapping):
-            raise TypeError("Fetcher returned a mapping/dict; must return iterable of records")
-        if not isinstance(records, Iterable):
+        if isinstance(records, (str, bytes, dict)) or not isinstance(records, Iterable):
             raise TypeError("Fetcher must return an iterable of records")
 
-        records_list = list(records)
+        records = list(records)
 
-        if self.expected_min_records > 0 and len(records_list) < self.expected_min_records:
+        if self.expected_min_records and len(records) < self.expected_min_records:
             logging.warning(
                 "Fetched %d records, expected at least %d",
-                len(records_list),
+                len(records),
                 self.expected_min_records,
             )
 
-        return records_list
+        logging.info("Fetched %d records", len(records))
+        return records
 
-    def _write(self, records: list) -> Tuple[int, int, bool]:
+    def _write_records(self, records: list) -> Tuple[int, int]:
         written = 0
         failed = 0
-        aborted = False
 
         iterator = records
         if self.show_progress:
-            iterator = tqdm(records, desc="Ingesting records", unit="record")
+            iterator = tqdm(records, desc="Ingesting", unit="record")
 
         for record in iterator:
             try:
                 self.writer(record)
                 written += 1
-            except Exception as exc:
+            except Exception:
                 failed += 1
+                logging.exception("Record write failed")
 
-                # Operator-visible and deterministic failure logging
-                if failed % self.log_every_n_failures == 0:
-                    label = self._record_label(record)
-                    logging.error(
-                        "Record write failed (%d failures) %s err=%s",
-                        failed,
-                        f"record={label}" if label else "",
-                        exc,
-                    )
-                    logging.debug("Record write exception detail", exc_info=True)
-
-                # Combat controls: stop if configured.
-                if self.fail_fast:
-                    aborted = True
-                    break
-                if self.max_failures is not None and failed >= self.max_failures:
-                    aborted = True
-                    break
-
-        return written, failed, aborted
-
-    def _record_label(self, record: Any) -> Optional[str]:
-        if not self.record_label:
-            return None
-        try:
-            v = self.record_label(record)
-            v = (v or "").strip()
-            return v or None
-        except Exception:
-            return None
+        logging.info(
+            "Write complete | written=%d failed=%d",
+            written,
+            failed,
+        )
+        return written, failed
 
     def _finish(
         self,
+        *,
         status: StatusCode,
         exit_code: ExitCode,
-        *,
-        fetched: int = 0,
-        written: int = 0,
-        failed: int = 0,
+        fetched: int,
+        written: int,
+        failed: int,
         start_time: float,
         message: Optional[str] = None,
     ) -> IngestionResult:
-        duration = time.monotonic() - start_time
+        duration = time.time() - start_time
 
         logging.info(
-            "Ingestion completed | status=%s exit=%s fetched=%d written=%d failed=%d duration=%.2fs",
-            getattr(status, "name", str(status)),
-            getattr(exit_code, "name", str(exit_code)),
+            "Ingestion result | status=%s exit=%s fetched=%d written=%d failed=%d duration=%.2fs",
+            status.name,
+            exit_code.name,
             fetched,
             written,
             failed,
             duration,
         )
-
-        if message:
-            logging.info("Ingestion message | %s", message)
 
         return IngestionResult(
             status_code=status,
