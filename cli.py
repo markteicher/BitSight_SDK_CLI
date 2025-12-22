@@ -4,7 +4,8 @@ import argparse
 import importlib
 import logging
 import sys
-from typing import Optional, Dict
+import json
+from typing import Optional, Dict, Callable
 
 from tqdm import tqdm
 
@@ -12,13 +13,34 @@ from tqdm import tqdm
 # ----------------------------------------------------------------------
 # logging
 # ----------------------------------------------------------------------
-def setup_logging(verbose: bool) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": self.formatTime(record, "%Y-%m-%d %H:%M:%S"),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+        }
+        return json.dumps(payload)
+
+
+def setup_logging(verbose: bool, json_logs: bool) -> None:
+    handler = logging.StreamHandler(sys.stdout)
+
+    if json_logs:
+        handler.setFormatter(JsonLogFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s",
+                "%Y-%m-%d %H:%M:%S",
+            )
+        )
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG if verbose else logging.INFO)
 
 
 # ----------------------------------------------------------------------
@@ -48,6 +70,20 @@ def ingest_module_name(subcommand: str) -> str:
     return subcommand.replace("-", "_")
 
 
+def wrap_writer(writer: Callable, dry_run: bool) -> Callable:
+    """
+    Dry-run wrapper: preserves ingestion flow, blocks side effects.
+    """
+    if not dry_run:
+        return writer
+
+    def _noop_writer(record):
+        logging.debug("DRY-RUN: record suppressed")
+        return None
+
+    return _noop_writer
+
+
 def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
     module_name = ingest_module_name(subcommand)
     full_module = f"ingest.{module_name}"
@@ -75,9 +111,7 @@ def dispatch_ingest(subcommand: str, args: argparse.Namespace) -> None:
                     obj.run()
                     return
 
-    logging.error(
-        "No valid entrypoint found in ingest module: %s", module_name
-    )
+    logging.error("No valid entrypoint found in ingest module: %s", module_name)
     sys.exit(1)
 
 
@@ -101,6 +135,8 @@ def main() -> None:
 
     # global options
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--json-logs", action="store_true")   # NEW
+    parser.add_argument("--dry-run", action="store_true")     # NEW
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--api-key")
     parser.add_argument("--base-url")
@@ -112,10 +148,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     # exit aliases
     # ------------------------------------------------------------------
-    subparsers.add_parser("exit")
-    subparsers.add_parser("quit")
-    subparsers.add_parser("x")
-    subparsers.add_parser("q")
+    for name in ("exit", "quit", "x", "q"):
+        subparsers.add_parser(name)
 
     # ------------------------------------------------------------------
     # config
@@ -123,11 +157,8 @@ def main() -> None:
     config = subparsers.add_parser("config")
     config_sub = config.add_subparsers(dest="subcommand", required=True)
 
-    config_sub.add_parser("init")
-    config_sub.add_parser("show")
-    config_sub.add_parser("validate")
-    config_sub.add_parser("reset")
-    config_sub.add_parser("clear-keys")
+    for name in ("init", "show", "validate", "reset", "clear-keys"):
+        config_sub.add_parser(name)
 
     config_set = config_sub.add_parser("set")
     config_set.add_argument("--api-key")
@@ -146,16 +177,13 @@ def main() -> None:
     db_init = db_sub.add_parser("init")
     _add_db_connection_args(db_init)
     db_init.add_argument("--schema-path", default="db/schema/mssql.sql")
+    db_init.add_argument("--stamp-schema", action="store_true")  # NEW
 
-    db_flush = db_sub.add_parser("flush")
-    _add_db_connection_args(db_flush)
-    db_flush.add_argument("--table")
-    db_flush.add_argument("--all", action="store_true")
-
-    db_clear = db_sub.add_parser("clear")
-    _add_db_connection_args(db_clear)
-    db_clear.add_argument("--table")
-    db_clear.add_argument("--all", action="store_true")
+    for name in ("flush", "clear"):
+        p = db_sub.add_parser(name)
+        _add_db_connection_args(p)
+        p.add_argument("--table")
+        p.add_argument("--all", action="store_true")
 
     db_sub.add_parser("status")
 
@@ -173,70 +201,26 @@ def main() -> None:
         p.add_argument("--flush", action="store_true")
         return p
 
-    # -------------------------
     # identity / users
-    # -------------------------
     ingest_cmd("users")
-
-    ingest_cmd(
-        "user-details",
-        [
-            (["--user-guid"], {"required": True}),
-        ],
-    )
-
+    ingest_cmd("user-details", [(["--user-guid"], {"required": True})])
     ingest_cmd("user-quota")
     ingest_cmd("user-company-views")
 
-    # -------------------------
     # core data
-    # -------------------------
     ingest_cmd("companies")
-    ingest_cmd(
-        "company-details",
-        [
-            (["--company-guid"], {"required": True}),
-        ],
-    )
-
+    ingest_cmd("company-details", [(["--company-guid"], {"required": True})])
     ingest_cmd("portfolio")
     ingest_cmd("current-ratings")
     ingest_cmd("current-ratings-v2")
+    ingest_cmd("ratings-history", [(["--company-guid"], {"required": True})])
+    ingest_cmd("findings", [(["--company-guid"], {"required": True})])
+    ingest_cmd("observations", [(["--company-guid"], {"required": True})])
 
-    ingest_cmd(
-        "ratings-history",
-        [
-            (["--company-guid"], {"required": True}),
-        ],
-    )
-
-    ingest_cmd(
-        "findings",
-        [
-            (["--company-guid"], {"required": True}),
-        ],
-    )
-
-    ingest_cmd(
-        "observations",
-        [
-            (["--company-guid"], {"required": True}),
-        ],
-    )
-
-    # -------------------------
     # threats
-    # -------------------------
     ingest_cmd("threats")
     ingest_cmd("threat-statistics")
-
-    ingest_cmd(
-        "threats-impact",
-        [
-            (["--threat-guid"], {"required": True}),
-        ],
-    )
-
+    ingest_cmd("threats-impact", [(["--threat-guid"], {"required": True})])
     ingest_cmd(
         "threats-evidence",
         [
@@ -246,15 +230,10 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # help
-    # ------------------------------------------------------------------
-    subparsers.add_parser("help")
-
-    # ------------------------------------------------------------------
     # parse + dispatch
     # ------------------------------------------------------------------
     args = parser.parse_args()
-    setup_logging(args.verbose)
+    setup_logging(args.verbose, args.json_logs)
 
     if args.command in ("exit", "quit", "x", "q"):
         exit_cli()
