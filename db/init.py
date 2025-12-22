@@ -62,35 +62,64 @@ class MSSQLInitializer:
     # ------------------------------------------------------------
     def _load_schema_statements(self) -> List[str]:
         """
-        Split schema file into executable MSSQL statements.
-        Uses semicolon delimiters safely.
+        Load and split schema into executable MSSQL statements.
+
+        Contract:
+          - Statements are semicolon-delimited
+          - 'GO' is ignored defensively if present
+          - Block and line comments are preserved but never executed alone
         """
         raw_sql = self.schema_path.read_text(encoding="utf-8")
+        raw_sql = raw_sql.replace("\ufeff", "").replace("\r\n", "\n").strip()
 
-        # Normalize line endings and strip BOMs
-        raw_sql = raw_sql.replace("\ufeff", "").strip()
-
-        statements = []
+        statements: List[str] = []
         buffer: List[str] = []
+
+        in_block_comment = False
+
+        def flush_buffer() -> None:
+            stmt = "\n".join(buffer).strip()
+            buffer.clear()
+
+            if not stmt:
+                return
+
+            # Drop comment-only statements
+            lines = [ln.strip() for ln in stmt.splitlines() if ln.strip()]
+            if lines and all(ln.startswith("--") for ln in lines):
+                return
+
+            statements.append(stmt.rstrip(";").strip())
 
         for line in raw_sql.splitlines():
             stripped = line.strip()
 
-            # Preserve comments
-            if stripped.startswith("--") or stripped.startswith("/*"):
+            # Ignore batch separators defensively
+            if not in_block_comment and stripped.upper() == "GO":
+                continue
+
+            # Handle block comments
+            if not in_block_comment and "/*" in stripped:
+                in_block_comment = True
+
+            if in_block_comment:
+                buffer.append(line)
+                if "*/" in stripped:
+                    in_block_comment = False
+                continue
+
+            # Line comments / blanks
+            if stripped.startswith("--") or not stripped:
                 buffer.append(line)
                 continue
 
             buffer.append(line)
 
             if stripped.endswith(";"):
-                statement = "\n".join(buffer).strip().rstrip(";")
-                statements.append(statement)
-                buffer.clear()
+                flush_buffer()
 
-        # Catch any trailing statement without semicolon
         if buffer:
-            statements.append("\n".join(buffer).strip())
+            flush_buffer()
 
         logging.info("Loaded %d schema statements", len(statements))
         return statements
