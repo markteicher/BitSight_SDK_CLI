@@ -19,6 +19,10 @@ def fetch_folders(
 ) -> List[Dict[str, Any]]:
     """
     Fetch folders from BitSight.
+
+    Endpoint:
+        GET /ratings/v1/folders
+
     Deterministic pagination using links.next when present.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
@@ -37,7 +41,7 @@ def fetch_folders(
 
     while True:
         params = {"limit": limit, "offset": offset}
-        logging.info(f"Fetching folders: {url} (limit={limit}, offset={offset})")
+        logging.info("Fetching folders: %s (limit=%d, offset=%d)", url, limit, offset)
 
         resp = session.get(
             url,
@@ -68,7 +72,7 @@ def fetch_folders(
 
         offset += limit
 
-    logging.info(f"Total folders fetched: {len(records)}")
+    logging.info("Total folders fetched: %d", len(records))
     return records
 
 
