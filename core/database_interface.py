@@ -4,20 +4,23 @@ core/database_interface.py
 
 Database contract for BitSight SDK + CLI.
 
-Design goals (combat/resilient):
-- Deterministic behavior across backends
-- Clear transaction semantics
-- Consistent error signaling (implementations may raise runtime errors mapped to StatusCode/ExitCode)
+Rules:
+- Interface MUST reflect real backend behavior.
+- No narrowing return types in implementations.
+- No hidden optional behavior.
+- All methods are synchronous and deterministic.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Iterable, Optional, Tuple
+from typing import Iterable, Tuple, Any, Optional
 
 
 class DatabaseInterface(ABC):
     """
-    Any supported database backend MUST implement this interface.
-    The CLI, ingestion engine, and db tooling rely exclusively on these methods.
+    Canonical database interface.
+
+    All database backends MUST implement this contract.
+    The ingestion engine and CLI rely exclusively on it.
     """
 
     # ------------------------------------------------------------
@@ -25,12 +28,20 @@ class DatabaseInterface(ABC):
     # ------------------------------------------------------------
     @abstractmethod
     def connect(self) -> None:
-        """Establish a database connection."""
+        """
+        Establish a database connection.
+
+        Must raise a backend-specific exception on failure.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
-        """Close the database connection."""
+        """
+        Close the database connection.
+
+        Must be safe to call multiple times.
+        """
         raise NotImplementedError
 
     # ------------------------------------------------------------
@@ -39,11 +50,10 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def ping(self) -> None:
         """
-        Validate the database connection.
+        Verify database connectivity.
 
-        Contract:
-        - MUST raise an exception on failure (deterministic failure signaling).
-        - MUST return None on success.
+        Must raise on failure.
+        Must NOT return a boolean.
         """
         raise NotImplementedError
 
@@ -51,6 +61,8 @@ class DatabaseInterface(ABC):
     def table_exists(self, table: str, schema: str = "dbo") -> bool:
         """
         Return True if the specified table exists.
+
+        Schema must be explicitly supported.
         """
         raise NotImplementedError
 
@@ -59,17 +71,29 @@ class DatabaseInterface(ABC):
     # ------------------------------------------------------------
     @abstractmethod
     def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> None:
-        """Execute a single SQL statement."""
+        """
+        Execute a single SQL statement.
+
+        Must raise on failure.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def executemany(self, sql: str, rows: Iterable[Tuple[Any, ...]]) -> None:
-        """Execute a parameterized SQL statement for multiple rows."""
+        """
+        Execute a parameterized SQL statement for multiple rows.
+
+        Must raise on failure.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def scalar(self, sql: str, params: Tuple[Any, ...] = ()) -> Optional[Any]:
-        """Execute a query and return a single scalar value."""
+        """
+        Execute a query and return a single scalar value.
+
+        Returns None if no rows are produced.
+        """
         raise NotImplementedError
 
     # ------------------------------------------------------------
@@ -77,10 +101,18 @@ class DatabaseInterface(ABC):
     # ------------------------------------------------------------
     @abstractmethod
     def commit(self) -> None:
-        """Commit the current transaction."""
+        """
+        Commit the current transaction.
+
+        Must raise on failure.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def rollback(self) -> None:
-        """Roll back the current transaction."""
+        """
+        Roll back the current transaction.
+
+        Must raise on failure.
+        """
         raise NotImplementedError
