@@ -18,7 +18,12 @@ def fetch_statistics(
 ) -> Dict[str, Any]:
     """
     Fetch global BitSight statistics.
-    This endpoint returns platform-wide aggregated metrics.
+
+    Endpoint:
+        GET /ratings/v1/statistics
+
+    This endpoint is non-paginated and returns platform-wide
+    aggregated metrics.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
 
@@ -27,6 +32,7 @@ def fetch_statistics(
 
     url = f"{base_url}{BITSIGHT_STATISTICS_ENDPOINT}"
     headers = {"Accept": "application/json"}
+
     ingested_at = datetime.utcnow()
 
     logging.info(f"Fetching BitSight statistics: {url}")
@@ -40,10 +46,7 @@ def fetch_statistics(
     )
     resp.raise_for_status()
 
-    payload = resp.json()
-
     return {
-        "scope": "global",
         "ingested_at": ingested_at,
-        "raw_payload": payload,
+        "raw_payload": resp.json(),
     }
