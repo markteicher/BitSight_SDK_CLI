@@ -19,6 +19,10 @@ def fetch_my_infrastructure(
 ) -> List[Dict[str, Any]]:
     """
     Fetch infrastructure assets associated with the authenticated organization.
+
+    Endpoint:
+        GET /ratings/v1/my-infrastructure
+
     Deterministic pagination using links.next when present.
     Auth: HTTP Basic Auth using api_key as username and blank password.
     """
@@ -26,7 +30,7 @@ def fetch_my_infrastructure(
     if base_url.endswith("/"):
         base_url = base_url[:-1]
 
-    url = f"{base_url}{BITSIGHT_MY_INRASTRUCTURE_ENDPOINT}"
+    url = f"{base_url}{BITSIGHT_MY_INFRASTRUCTURE_ENDPOINT}"
     headers = {"Accept": "application/json"}
 
     records: List[Dict[str, Any]] = []
@@ -38,7 +42,10 @@ def fetch_my_infrastructure(
     while True:
         params = {"limit": limit, "offset": offset}
         logging.info(
-            f"Fetching my infrastructure: {url} (limit={limit}, offset={offset})"
+            "Fetching my infrastructure: %s (limit=%d, offset=%d)",
+            url,
+            limit,
+            offset,
         )
 
         resp = session.get(
@@ -55,16 +62,7 @@ def fetch_my_infrastructure(
         results = payload.get("results", [])
 
         for obj in results:
-            records.append({
-                "asset_guid": obj.get("guid"),
-                "asset_type": obj.get("type"),
-                "ip_address": obj.get("ip_address"),
-                "domain": obj.get("domain"),
-                "first_seen_date": obj.get("first_seen_date"),
-                "last_seen_date": obj.get("last_seen_date"),
-                "ingested_at": ingested_at,
-                "raw_payload": obj,
-            })
+            records.append(_normalize_my_infrastructure(obj, ingested_at))
 
         links = payload.get("links") or {}
         next_link = links.get("next")
@@ -79,8 +77,28 @@ def fetch_my_infrastructure(
 
         offset += limit
 
-    logging.info(f"Total infrastructure assets fetched: {len(records)}")
+    logging.info("Total infrastructure assets fetched: %d", len(records))
     return records
+
+
+def _normalize_my_infrastructure(
+    obj: Dict[str, Any],
+    ingested_at: datetime,
+) -> Dict[str, Any]:
+    """
+    Map my-infrastructure object into dbo.bitsight_my_infrastructure schema.
+    """
+
+    return {
+        "asset_guid": obj.get("guid"),
+        "asset_type": obj.get("type"),
+        "ip_address": obj.get("ip_address"),
+        "domain": obj.get("domain"),
+        "first_seen_date": obj.get("first_seen_date"),
+        "last_seen_date": obj.get("last_seen_date"),
+        "ingested_at": ingested_at,
+        "raw_payload": obj,
+    }
 
 
 def _absolutize_next(current_url: str, next_link: str) -> str:
