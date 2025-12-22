@@ -4,7 +4,6 @@
    1:1 Physical Representation of ALL BitSight API Endpoints
 
    Notes:
-   - NO GO batches (compatible with your initializer)
    - No session-level SETs (don’t force instance/session behavior)
    - Every object is guarded (combat/resilient re-deploy)
    ============================================================ */
@@ -268,7 +267,6 @@ BEGIN
     );
 END;
 
--- Global findings summaries/statistics (non-company scoped)
 IF OBJECT_ID(N'dbo.bitsight_findings_statistics_global', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.bitsight_findings_statistics_global (
@@ -336,7 +334,6 @@ BEGIN
     );
 END;
 
--- NOTE: NVARCHAR(MAX) cannot be part of a key. Use a surrogate combat-safe key.
 IF OBJECT_ID(N'dbo.bitsight_my_infrastructure', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.bitsight_my_infrastructure (
@@ -654,7 +651,6 @@ BEGIN
     );
 END;
 
--- NOTE: NVARCHAR(MAX) cannot be part of a key. Use a surrogate combat-safe key.
 IF OBJECT_ID(N'dbo.bitsight_subsidiary_statistics', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.bitsight_subsidiary_statistics (
