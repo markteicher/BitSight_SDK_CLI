@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+core/transport.py
+
+Hardened HTTP transport layer for BitSight SDK + CLI.
+
+Responsibilities:
+- Session construction
+- Proxy validation and wiring
+- API connectivity validation
+- Deterministic mapping of failures to StatusCode
+- Zero retries, zero magic, zero mutation of caller state
+"""
 
 import logging
 from dataclasses import dataclass
@@ -10,6 +22,10 @@ from requests import Session
 
 from core.status_codes import StatusCode
 
+
+# ============================================================
+# Configuration
+# ============================================================
 
 @dataclass(frozen=True)
 class TransportConfig:
@@ -24,35 +40,75 @@ class TransportConfig:
     verify_ssl: bool = True
 
 
+# ============================================================
+# Errors
+# ============================================================
+
 class TransportError(Exception):
-    def __init__(self, message: str, status_code: StatusCode, http_status: Optional[int] = None):
+    """
+    Transport-layer exception with deterministic StatusCode mapping.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: StatusCode,
+        http_status: Optional[int] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.http_status = http_status
 
 
+# ============================================================
+# Internal helpers
+# ============================================================
+
 def _normalize_base_url(base_url: str) -> str:
-    if not isinstance(base_url, str) or not base_url.strip():
-        raise ValueError("base_url must be a non-empty string")
-    return base_url.strip().rstrip("/")
+    if not isinstance(base_url, str):
+        raise TransportError(
+            "base_url must be a string",
+            StatusCode.CONFIG_INVALID,
+        )
+
+    value = base_url.strip()
+    if not value:
+        raise TransportError(
+            "base_url must not be empty",
+            StatusCode.CONFIG_INVALID,
+        )
+
+    return value.rstrip("/")
 
 
 def _validate_proxy_config(cfg: TransportConfig) -> None:
-    if cfg.proxy_url is None and (cfg.proxy_username or cfg.proxy_password):
-        raise ValueError("proxy_username/proxy_password provided but proxy_url is missing")
-
     if cfg.proxy_url is None:
+        if cfg.proxy_username or cfg.proxy_password:
+            raise TransportError(
+                "Proxy credentials supplied without proxy_url",
+                StatusCode.CONFIG_CONFLICT,
+            )
         return
 
     parsed = urlparse(cfg.proxy_url)
+
     if parsed.scheme not in ("http", "https"):
-        raise ValueError("proxy_url must start with http:// or https://")
+        raise TransportError(
+            "proxy_url must start with http:// or https://",
+            StatusCode.CONFIG_INVALID,
+        )
 
     if not parsed.hostname:
-        raise ValueError("proxy_url missing hostname")
+        raise TransportError(
+            "proxy_url missing hostname",
+            StatusCode.CONFIG_INVALID,
+        )
 
     if (cfg.proxy_username is None) != (cfg.proxy_password is None):
-        raise ValueError("proxy_username and proxy_password must be provided together")
+        raise TransportError(
+            "proxy_username and proxy_password must be provided together",
+            StatusCode.CONFIG_CONFLICT,
+        )
 
 
 def _build_proxies(cfg: TransportConfig) -> Optional[Dict[str, str]]:
@@ -67,18 +123,31 @@ def _build_proxies(cfg: TransportConfig) -> Optional[Dict[str, str]]:
             netloc += f":{parsed.port}"
         parsed = parsed._replace(netloc=netloc)
 
-    proxy = urlunparse(parsed)
-    return {"http": proxy, "https": proxy}
+    proxy_url = urlunparse(parsed)
+    return {"http": proxy_url, "https": proxy_url}
 
+
+# ============================================================
+# Public API
+# ============================================================
 
 def build_session(cfg: TransportConfig) -> Tuple[Session, Optional[Dict[str, str]]]:
+    """
+    Construct a hardened requests.Session and proxy map.
+
+    This function performs validation only. It does not perform I/O.
+    """
+
     _validate_proxy_config(cfg)
+
     session = requests.Session()
     proxies = _build_proxies(cfg)
+
     return session, proxies
 
 
 def validate_bitsight_api(
+    *,
     session: Session,
     cfg: TransportConfig,
     proxies: Optional[Dict[str, str]],
@@ -86,10 +155,12 @@ def validate_bitsight_api(
     """
     Validate BitSight API connectivity and authentication.
 
-    Raises TransportError with a StatusCode on failure.
-    """
+    Success:
+        - Returns None
 
-    base_url = _normalize_base_url(cfg.base_url)
+    Failure:
+        - Raises TransportError with deterministic StatusCode
+    """
 
     if not cfg.api_key or not cfg.api_key.strip():
         raise TransportError(
@@ -97,15 +168,15 @@ def validate_bitsight_api(
             StatusCode.AUTH_API_KEY_MISSING,
         )
 
+    base_url = _normalize_base_url(cfg.base_url)
     url = f"{base_url}/ratings/v1/current-ratings"
-    params = {"limit": 1, "offset": 0}
 
     logging.info("Validating BitSight API connectivity: %s", url)
 
     try:
         resp = session.get(
             url,
-            params=params,
+            params={"limit": 1, "offset": 0},
             auth=(cfg.api_key, ""),
             timeout=cfg.timeout,
             proxies=proxies,
@@ -114,22 +185,45 @@ def validate_bitsight_api(
         )
 
     except requests.exceptions.ProxyError as e:
-        raise TransportError(str(e), StatusCode.TRANSPORT_PROXY_ERROR) from e
+        raise TransportError(
+            str(e),
+            StatusCode.TRANSPORT_PROXY_ERROR,
+        ) from e
 
     except requests.exceptions.SSLError as e:
-        raise TransportError(str(e), StatusCode.TRANSPORT_SSL_ERROR) from e
+        raise TransportError(
+            str(e),
+            StatusCode.TRANSPORT_SSL_ERROR,
+        ) from e
 
     except requests.exceptions.Timeout as e:
-        raise TransportError(str(e), StatusCode.TRANSPORT_TIMEOUT) from e
+        raise TransportError(
+            str(e),
+            StatusCode.TRANSPORT_TIMEOUT,
+        ) from e
 
     except requests.exceptions.ConnectionError as e:
-        msg = str(e)
-        if "name or service not known" in msg.lower():
-            raise TransportError(str(e), StatusCode.TRANSPORT_DNS_FAILURE) from e
-        raise TransportError(str(e), StatusCode.TRANSPORT_CONNECTION_FAILED) from e
+        msg = str(e).lower()
+        if "name or service not known" in msg or "dns" in msg:
+            raise TransportError(
+                str(e),
+                StatusCode.TRANSPORT_DNS_FAILURE,
+            ) from e
+
+        raise TransportError(
+            str(e),
+            StatusCode.TRANSPORT_CONNECTION_FAILED,
+        ) from e
 
     except Exception as e:
-        raise TransportError(str(e), StatusCode.API_UNEXPECTED_RESPONSE) from e
+        raise TransportError(
+            str(e),
+            StatusCode.TRANSPORT_UNKNOWN,
+        ) from e
+
+    # --------------------------------------------------------
+    # HTTP status handling
+    # --------------------------------------------------------
 
     http_status = resp.status_code
 
@@ -137,19 +231,39 @@ def validate_bitsight_api(
         return
 
     if http_status == 401:
-        raise TransportError("Unauthorized", StatusCode.API_UNAUTHORIZED, http_status)
+        raise TransportError(
+            "Unauthorized",
+            StatusCode.API_UNAUTHORIZED,
+            http_status,
+        )
 
     if http_status == 403:
-        raise TransportError("Forbidden", StatusCode.API_FORBIDDEN, http_status)
+        raise TransportError(
+            "Forbidden",
+            StatusCode.API_FORBIDDEN,
+            http_status,
+        )
 
     if http_status == 404:
-        raise TransportError("Not found", StatusCode.API_NOT_FOUND, http_status)
+        raise TransportError(
+            "Not found",
+            StatusCode.API_NOT_FOUND,
+            http_status,
+        )
 
     if http_status == 429:
-        raise TransportError("Rate limited", StatusCode.API_RATE_LIMITED, http_status)
+        raise TransportError(
+            "Rate limited",
+            StatusCode.API_RATE_LIMITED,
+            http_status,
+        )
 
     if 500 <= http_status <= 599:
-        raise TransportError("Server error", StatusCode.API_SERVER_ERROR, http_status)
+        raise TransportError(
+            "Server error",
+            StatusCode.API_SERVER_ERROR,
+            http_status,
+        )
 
     raise TransportError(
         f"Unexpected HTTP status {http_status}",
