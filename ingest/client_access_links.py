@@ -1,57 +1,217 @@
 #!/usr/bin/env python3
+"""
+ingest/client_access_links.py
+
+Net-new + update + removal ingestion for BitSight Client Access Links.
+
+Table:
+  dbo.bitsight_client_access_links (PK: link_guid)
+
+Behavior:
+- net-new: INSERT
+- update:  UPDATE when payload_hash changes
+- removal: soft-delete (is_active=0) when previously-active key no longer present
+- dry-run: full fetch + diff, no DB mutations
+"""
+
+from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
 
-from core.status_codes import StatusCode
-from core.transport import TransportError
-from ingest.base import BitSightIngestBase
+from core.config import ConfigStore, Config, ConfigError
+from core.db_router import DatabaseRouter
+from core.exit_codes import ExitCode
+from core.ingestion import IngestionExecutor, IngestionResult
+from core.transport import TransportConfig, TransportError, build_session
+from ingest.base import (
+    TableSpec,
+    DeltaState,
+    fetch_paged_results,
+    make_delta_writer,
+    deactivate_missing_records,
+    log_delta,
+    utc_now,
+)
 
-
-# BitSight Client Access Links endpoint
+# NOTE: adjust if your repo already has the confirmed endpoint elsewhere.
 BITSIGHT_CLIENT_ACCESS_LINKS_ENDPOINT = "/ratings/v1/client-access-links"
 
 
-def fetch_client_access_links(
-    ingest: BitSightIngestBase,
-) -> List[Dict[str, Any]]:
+def _merge_cfg(file_cfg: Config, args) -> Config:
+    updates: Dict[str, Any] = {}
+    for field in (
+        "api_key",
+        "base_url",
+        "proxy_url",
+        "proxy_username",
+        "proxy_password",
+        "timeout",
+        "mssql_server",
+        "mssql_database",
+        "mssql_username",
+        "mssql_password",
+        "mssql_driver",
+        "mssql_encrypt",
+        "mssql_trust_cert",
+        "mssql_timeout",
+    ):
+        if hasattr(args, field):
+            v = getattr(args, field)
+            if v is not None:
+                updates[field] = v
+    return Config(**{**file_cfg.__dict__, **updates}) if updates else file_cfg
+
+
+def run(args) -> IngestionResult:
     """
-    Fetch client access links from BitSight.
-
-    Deterministic pagination using links.next when present.
-    Auth: HTTP Basic Auth using api_key as username and blank password.
+    Entrypoint for cli.py dispatch_ingest().
     """
+    store = ConfigStore()
+    try:
+        cfg = _merge_cfg(store.load(), args)
+    except ConfigError as e:
+        logging.error(str(e))
+        return IngestionResult(
+            status_code=None,  # type: ignore[arg-type]
+            exit_code=ExitCode.CONFIG_FILE_INVALID,
+            records_fetched=0,
+            records_written=0,
+            records_failed=0,
+            duration_seconds=0.0,
+            message=str(e),
+        )
 
-    records: List[Dict[str, Any]] = []
-    ingested_at = datetime.utcnow()
+    cfg.validate(require_api_key=True)
 
-    logging.info("Fetching client access links")
+    if not all([cfg.mssql_server, cfg.mssql_database, cfg.mssql_username, cfg.mssql_password]):
+        msg = "Missing MSSQL connection parameters (server/database/username/password)"
+        logging.error(msg)
+        return IngestionResult(
+            status_code=None,  # type: ignore[arg-type]
+            exit_code=ExitCode.CONFIG_VALUE_MISSING,
+            records_fetched=0,
+            records_written=0,
+            records_failed=0,
+            duration_seconds=0.0,
+            message=msg,
+        )
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    show_progress = not bool(getattr(args, "no_progress", False))
+
+    # Transport/session (CLI already preflighted; this is the actual data pull)
+    tcfg = TransportConfig(
+        base_url=cfg.base_url,
+        api_key=cfg.api_key or "",
+        timeout=cfg.timeout,
+        proxy_url=cfg.proxy_url,
+        proxy_username=cfg.proxy_username,
+        proxy_password=cfg.proxy_password,
+        verify_ssl=True,
+    )
+    session, proxies = build_session(tcfg)
+
+    # DB connect
+    db = DatabaseRouter.get_database(
+        backend="mssql",
+        server=cfg.mssql_server,
+        database=cfg.mssql_database,
+        username=cfg.mssql_username,
+        password=cfg.mssql_password,
+        driver=cfg.mssql_driver,
+        encrypt=cfg.mssql_encrypt,
+        trust_cert=cfg.mssql_trust_cert,
+        timeout=cfg.mssql_timeout,
+    )
+    db.connect()
+
+    spec = TableSpec(table="dbo.bitsight_client_access_links", pk_col="link_guid")
+    delta = DeltaState()
+
+    def fetcher() -> List[Dict[str, Any]]:
+        return fetch_paged_results(
+            session=session,
+            base_url=cfg.base_url,
+            api_key=cfg.api_key or "",
+            endpoint=BITSIGHT_CLIENT_ACCESS_LINKS_ENDPOINT,
+            timeout=cfg.timeout,
+            proxies=proxies,
+            page_size=100,
+        )
+
+    def key_fn(rec: Dict[str, Any]) -> str:
+        # API examples vary; support both guid/link_guid keys.
+        guid = rec.get("guid", rec.get("link_guid"))
+        if guid is None:
+            raise ValueError("Client access link record missing guid")
+        return str(guid)
+
+    writer = make_delta_writer(
+        db=db,
+        spec=spec,
+        key_fn=key_fn,
+        delta=delta,
+        dry_run=dry_run,
+    )
+
+    executor = IngestionExecutor(
+        fetcher=fetcher,
+        writer=writer,
+        expected_min_records=0,
+        show_progress=show_progress,
+        dry_run=dry_run,  # requires your corrected core/ingestion.py to accept this
+    )
 
     try:
-        for obj in ingest.paginate(BITSIGHT_CLIENT_ACCESS_LINKS_ENDPOINT):
-            records.append(
-                {
-                    "access_link_guid": obj.get("guid"),
-                    "company_guid": (obj.get("company") or {}).get("guid"),
-                    "company_name": (obj.get("company") or {}).get("name"),
-                    "created_at": obj.get("created_at"),
-                    "expires_at": obj.get("expires_at"),
-                    "status": obj.get("status"),
-                    "created_by": (obj.get("created_by") or {}).get("email"),
-                    "ingested_at": ingested_at,
-                    "raw_payload": obj,
-                }
-            )
+        result = executor.run()
 
-    except TransportError:
-        raise
+        # Removals (soft-delete) happen after we’ve seen the full remote set
+        removed = deactivate_missing_records(
+            db=db,
+            spec=spec,
+            now=utc_now(),
+            seen_keys=delta.seen_keys,
+            dry_run=dry_run,
+        )
+        delta.removed = removed
 
-    except Exception as exc:
-        raise TransportError(
-            str(exc),
-            StatusCode.INGESTION_FETCH_FAILED,
-        ) from exc
+        log_delta(label="CLIENT_ACCESS_LINKS", delta=delta, dry_run=dry_run)
 
-    logging.info("Total client access links fetched: %d", len(records))
-    return records
+        if dry_run:
+            db.rollback()
+        else:
+            db.commit()
+
+        return result
+
+    except TransportError as e:
+        db.rollback()
+        logging.error(str(e))
+        return IngestionResult(
+            status_code=None,  # type: ignore[arg-type]
+            exit_code=ExitCode.API_UNKNOWN_ERROR,
+            records_fetched=0,
+            records_written=0,
+            records_failed=0,
+            duration_seconds=0.0,
+            message=str(e),
+        )
+    except Exception as e:
+        db.rollback()
+        logging.exception("client-access-links ingestion failed")
+        return IngestionResult(
+            status_code=None,  # type: ignore[arg-type]
+            exit_code=ExitCode.RUNTIME_EXCEPTION,
+            records_fetched=0,
+            records_written=0,
+            records_failed=0,
+            duration_seconds=0.0,
+            message=str(e),
+        )
+    finally:
+        db.close()
+
+
+def main(args) -> IngestionResult:
+    return run(args)
