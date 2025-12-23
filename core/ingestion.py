@@ -10,6 +10,7 @@ Responsibilities:
 - Surface partial vs total failure
 - Emit StatusCode for runtime semantics
 - Emit ExitCode exactly once at termination
+- Enforce dry-run at the writer boundary
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ class IngestionExecutor:
         writer: Callable[[Any], None],
         expected_min_records: int = 0,
         show_progress: bool = True,
+        dry_run: bool = False,
     ):
         if not callable(fetcher):
             raise TypeError("fetcher must be callable")
@@ -74,6 +76,7 @@ class IngestionExecutor:
         self.writer = writer
         self.expected_min_records = expected_min_records
         self.show_progress = show_progress
+        self.dry_run = dry_run
 
     # --------------------------------------------------------
     # Public
@@ -123,9 +126,19 @@ class IngestionExecutor:
                 )
 
             # -----------------------------
-            # WRITE
+            # WRITE (or DRY-RUN)
             # -----------------------------
             written, failed = self._write(records)
+
+            if self.dry_run:
+                return self._finish(
+                    StatusCode.OK_DRY_RUN,
+                    ExitCode.SUCCESS_DRY_RUN_OK,
+                    fetched=fetched,
+                    written=written,
+                    failed=0,
+                    start_time=start_time,
+                )
 
             if written == 0 and failed > 0:
                 return self._finish(
@@ -186,4 +199,64 @@ class IngestionExecutor:
         records = self.fetcher()
 
         if records is None:
-            raise
+            raise TypeError("Fetcher returned None")
+
+        if isinstance(records, (str, bytes, dict)) or not isinstance(records, Iterable):
+            raise TypeError("Fetcher must return an iterable of records")
+
+        return list(records)
+
+    def _write(self, records: list[Any]) -> tuple[int, int]:
+        written = 0
+        failed = 0
+
+        iterator = records
+        if self.show_progress:
+            iterator = tqdm(records, desc="Ingesting records", unit="record")
+
+        for record in iterator:
+            try:
+                if self.dry_run:
+                    logging.debug("DRY-RUN: write suppressed")
+                    written += 1
+                else:
+                    self.writer(record)
+                    written += 1
+            except Exception:
+                failed += 1
+                logging.exception("Record write failed")
+
+        return written, failed
+
+    def _finish(
+        self,
+        status: StatusCode,
+        exit_code: ExitCode,
+        *,
+        fetched: int,
+        written: int,
+        failed: int,
+        start_time: float,
+        message: Optional[str] = None,
+    ) -> IngestionResult:
+        duration = time.monotonic() - start_time
+
+        logging.info(
+            "Ingestion completed | status=%s exit=%s fetched=%d written=%d failed=%d duration=%.2fs",
+            status.name,
+            exit_code.name,
+            fetched,
+            written,
+            failed,
+            duration,
+        )
+
+        return IngestionResult(
+            status_code=status,
+            exit_code=exit_code,
+            records_fetched=fetched,
+            records_written=written,
+            records_failed=failed,
+            duration_seconds=duration,
+            message=message,
+        )
