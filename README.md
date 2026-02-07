@@ -1,3 +1,5 @@
+![BitSight](docs/images/bitsight_logo.jpg)
+
 # 🛡️ BitSight SDK + CLI
 
 A Software Developer's Kit and Command Line Interpreter interface for  Bitsight Security Ratings. 
