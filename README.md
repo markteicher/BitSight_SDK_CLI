@@ -1,4 +1,4 @@
-![BitSight](docs/images/BitSight_logo.jpg)
+![BitSight](docs/images/%20BitSight_logo.jpg)
 
 
 # 🛡️ BitSight SDK + CLI
