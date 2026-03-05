@@ -72,19 +72,19 @@ These options apply to all commands (when present on the CLI):
 
 ## 🧭 Command taxonomy
 
-The BitSight CLI is organized into two planes:
+The BitSight CLI is organized into two parts:
 
-### A) Control plane (changes state)
+### A) Control 
 - `config` — configuration management
 - `db` — database initialization / maintenance
 - `ingest` — API → database ingestion
 
-### B) Inspection plane (observes state)
-- `show` — query data already in the database (planned/next)
-- `stats` — summarize database contents (planned/next)
-- `health` — connection + schema + ingestion status checks (planned/next)
+### B) Inspection 
+- `show` — query data already in the database 
+- `stats` — summarize database contents 
+- `health` — connection + schema + ingestion status checks 
 
-> `show/stats/health` are part of the agreed taxonomy and are wired after the control plane is complete.
+> `show/stats/health` 
 
 ---
 
@@ -183,7 +183,7 @@ Grouped ingestion runs multiple ingestion commands in sequence:
 - `bitsight-cli ingest-group security`
 - `bitsight-cli ingest-group all`
 
-(These groupings are explicitly wired.)
+
 
 ---
 
