@@ -263,7 +263,7 @@ Tables store `raw_payload` as `NVARCHAR(MAX)` to preserve the full API response 
 
 #MIT License
 
-#Copyright (c) 2025 Mark Teicher
+#Copyright (c) 2026 David Scott Bird/Mark Teicher - TruSecure LLC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
